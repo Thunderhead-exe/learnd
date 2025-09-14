@@ -1,0 +1,22 @@
+{
+  "primary_layer_capacity": 1000,
+  "promotion_threshold": 10,
+  "demotion_threshold": 2,
+  "frequency_decay_rate": 0.95,
+  "cluster_similarity_threshold": 0.8,
+  "max_cluster_size": 50,
+  "min_cluster_cohesion": 0.6,
+  "clustering_method": "kmeans",
+  "default_similarity_threshold": 0.7,
+  "max_retrieval_results": 10,
+  "context_window_size": 2048,
+  "cleanup_age_days": 30,
+  "rebalance_frequency_hours": 24,
+  "optimization_interval_hours": 168,
+  "qdrant_url": "https://your-cluster.gcp.cloud.qdrant.io:6333",
+  "collection_name": "learnd-concepts",
+  "embedding_model": "all-MiniLM-L6-v2",
+  "embedding_dimension": 384,
+  "concept_extraction_model": "mistral-large-latest",
+  "max_concepts_per_input": 10
+}
