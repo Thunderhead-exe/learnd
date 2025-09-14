@@ -98,10 +98,12 @@ For local development:
 uv run fastmcp run learnd.mcp_server:mcp
 ```
 
-For deployment (avoids import issues):
+For deployment (avoids import issues & handles read-only filesystems):
 ```bash
 uv run fastmcp run deploy_server:mcp
 ```
+
+> 💡 **Deployment Note**: If you encounter "[Errno 30] Read-only file system" errors, use `deploy_server.py` which automatically handles serverless/container environments with read-only filesystems.
 
 The server will start on `http://localhost:8000` with 8 MCP tools available.
 
@@ -167,10 +169,26 @@ async def enhanced_chat_bot(user_message: str) -> str:
 
 **DEPLOYMENT_GUIDE.md includes:**
 - Deployment-ready server for production
-- Fixing relative import issues
+- Fixing relative import issues  
+- Read-only filesystem solutions
 - Platform-specific instructions (AWS Lambda, Google Cloud, Azure)
 - Docker deployment
 - Troubleshooting guide
+
+### 🔧 Quick Deployment Check
+
+Before deploying, run the diagnostic tool to check for common issues:
+
+```bash
+uv run python deployment_check.py
+```
+
+This will verify:
+- ✅ Filesystem permissions
+- ✅ Environment variables  
+- ✅ Required dependencies
+- ✅ Python path configuration
+- ✅ Cache setup
 
 ## ⚙️ Configuration
 

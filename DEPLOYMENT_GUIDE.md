@@ -54,7 +54,26 @@ from learnd.mcp_server import mcp
    uv run fastmcp run learnd.mcp_server:mcp
    ```
 
-### Issue 2: Lambda/Serverless Deployment
+### Issue 2: Read-Only File System Error
+
+**Symptoms**: `[Errno 30] Read-only file system` or cache-related errors in serverless environments.
+
+**Cause**: Sentence-transformers and other ML libraries try to cache models to the home directory, which is read-only in many deployment environments.
+
+**Solution**: Use the deployment server which automatically handles this:
+
+```bash
+# Use the deployment server (handles read-only filesystems)
+uv run fastmcp run deploy_server:mcp
+```
+
+The deployment server includes:
+- Automatic cache directory detection and fallback
+- Environment variable configuration for transformers
+- Logging optimized for serverless environments
+- Health checks that report filesystem status
+
+### Issue 3: Lambda/Serverless Deployment
 
 For AWS Lambda or similar serverless deployments:
 
@@ -66,6 +85,7 @@ For AWS Lambda or similar serverless deployments:
    # Copy source files
    cp -r learnd/ deployment/
    cp deploy_server.py deployment/
+   cp serverless_config.py deployment/
    cp env.template deployment/.env
    
    # Install dependencies
@@ -272,14 +292,23 @@ Monitor these log messages:
 1. **"attempted relative import with no known parent package"**
    - Use `deploy_server.py` instead of `learnd.mcp_server`
 
-2. **"ModuleNotFoundError: No module named 'learnd'"**
+2. **"[Errno 30] Read-only file system" / cache errors**
+   - Use `deploy_server.py` which handles read-only filesystems
+   - Check health_check endpoint for filesystem status
+   - Environment should show `filesystem_readonly: true` in health check
+
+3. **"ModuleNotFoundError: No module named 'learnd'"**
    - Add package to Python path or install with `pip install -e .`
 
-3. **"Failed to initialize Qdrant"**
+4. **"Failed to initialize Qdrant"**
    - Check `QDRANT_URL` and `QDRANT_API_KEY` environment variables
 
-4. **"Mistral API key not provided"**
+5. **"Mistral API key not provided"**
    - Set `MISTRAL_API_KEY` environment variable
+
+6. **Sentence-transformers cache errors**
+   - The deployment server automatically handles this
+   - Models will use temp directory or fallback to minimal caching
 
 ### Get Support
 

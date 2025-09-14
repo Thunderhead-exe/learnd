@@ -10,11 +10,28 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
+import warnings
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from loguru import logger
+
+# Configure serverless environment
+try:
+    from serverless_config import configure_for_serverless
+    configure_for_serverless()
+except ImportError:
+    # Fallback configuration if serverless_config is not available
+    os.environ['TRANSFORMERS_OFFLINE'] = '1'
+    os.environ['HF_DATASETS_OFFLINE'] = '1'
+    os.environ['TRANSFORMERS_CACHE'] = tempfile.gettempdir()
+    os.environ['SENTENCE_TRANSFORMERS_HOME'] = tempfile.gettempdir()
+    warnings.filterwarnings("ignore")
+    
+    from loguru import logger
+    logger.remove()
+    logger.add(sys.stderr, format="{time} | {level} | {message}", level="INFO")
 
 # Add current directory to Python path for absolute imports
 current_dir = Path(__file__).parent
@@ -310,6 +327,7 @@ async def health_check() -> Dict[str, Any]:
     ❤️ Health check for deployment monitoring
     
     Intent: Simple health check endpoint to verify the service is running correctly.
+    Includes filesystem and environment checks for deployment troubleshooting.
     
     Expected Input: None
     
@@ -317,20 +335,46 @@ async def health_check() -> Dict[str, Any]:
     {
         "status": "healthy",
         "service": "learnd-mcp",
-        "version": "0.1.0"
+        "version": "0.1.0",
+        "environment": {
+            "filesystem_readonly": false,
+            "cache_available": true
+        }
     }
     """
     try:
-        return {
+        # Check basic service health
+        health_status = {
             "status": "healthy",
             "service": "learnd-mcp", 
             "version": "0.1.0",
             "timestamp": asyncio.get_event_loop().time()
         }
+        
+        # Add environment diagnostics
+        try:
+            from serverless_config import get_deployment_config
+            config = get_deployment_config()
+            health_status["environment"] = {
+                "filesystem_readonly": config["read_only_filesystem"],
+                "temp_writable": config["temp_dir_writable"], 
+                "cache_available": config["cache_available"],
+                "cache_location": config["environment_vars"]["TRANSFORMERS_CACHE"]
+            }
+        except:
+            # Fallback environment check
+            health_status["environment"] = {
+                "filesystem_readonly": "unknown",
+                "cache_available": "unknown"
+            }
+            
+        return health_status
+        
     except Exception as e:
         return {
             "status": "unhealthy",
-            "error": str(e)
+            "error": str(e),
+            "service": "learnd-mcp"
         }
 
 

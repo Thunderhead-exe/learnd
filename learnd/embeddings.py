@@ -34,9 +34,27 @@ class EmbeddingManager:
         """Initialize the embedding model."""
         try:
             if SENTENCE_TRANSFORMERS_AVAILABLE:
-                # Initialize sentence transformer model
-                self.model = SentenceTransformer(self.config.embedding_model)
-                logger.info(f"Initialized SentenceTransformer model: {self.config.embedding_model}")
+                # Initialize sentence transformer model with cache handling
+                try:
+                    # Try with caching first
+                    self.model = SentenceTransformer(self.config.embedding_model)
+                    logger.info(f"Initialized SentenceTransformer model: {self.config.embedding_model}")
+                except Exception as cache_error:
+                    # If caching fails (read-only filesystem), try without cache
+                    logger.warning(f"Cache initialization failed, retrying without cache: {cache_error}")
+                    import tempfile
+                    import os
+                    
+                    # Set to a writable temp directory or disable caching
+                    try:
+                        temp_cache = tempfile.mkdtemp()
+                        os.environ['SENTENCE_TRANSFORMERS_HOME'] = temp_cache
+                        self.model = SentenceTransformer(self.config.embedding_model)
+                        logger.info(f"Initialized SentenceTransformer with temp cache: {self.config.embedding_model}")
+                    except:
+                        # Final fallback - try with minimal model
+                        self.model = SentenceTransformer('all-MiniLM-L6-v2', cache_folder=None)
+                        logger.info("Initialized with fallback SentenceTransformer model")
             else:
                 raise ValueError("sentence-transformers library not available. Please install it.")
                 
