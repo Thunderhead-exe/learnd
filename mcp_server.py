@@ -183,10 +183,10 @@ async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         )
         query_embedding = embeddings_response.data[0].embedding
         
-        # Search in Qdrant
-        search_results = qdrant_client.search(
+        # Search in Qdrant using the new query_points method
+        search_results = qdrant_client.query_points(
             collection_name=COLLECTION_NAME,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=limit,
             with_payload=True,
             score_threshold=0.3
@@ -194,7 +194,7 @@ async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         
         # Format results
         results = []
-        for result in search_results:
+        for result in search_results.points:
             results.append({
                 "text": result.payload.get("text", ""),
                 "score": round(result.score, 3),
@@ -477,10 +477,23 @@ async def get_relevant_context(query: str, max_concepts: int = 5) -> Dict[str, A
     }
     """
     try:
-        # Search for relevant concepts
-        search_result = await qdrant_find(query, max_concepts)
+        # Search for relevant concepts using the underlying function
+        search_results = await find_in_qdrant(query, max_concepts)
         
-        if not search_result["success"] or not search_result["results"]:
+        # Check if we got an error
+        if search_results and isinstance(search_results, list) and len(search_results) > 0 and "error" in search_results[0]:
+            return {
+                "context_found": False,
+                "formatted_context": f"Error retrieving context: {search_results[0]['error']}",
+                "concepts": [],
+                "total_found": 0,
+                "error": search_results[0]['error']
+            }
+        
+        # Filter out any error results and check if we have valid results
+        valid_results = [r for r in search_results if "error" not in r]
+        
+        if not valid_results:
             return {
                 "context_found": False,
                 "formatted_context": "No relevant previous learning found for this query.",
@@ -490,7 +503,7 @@ async def get_relevant_context(query: str, max_concepts: int = 5) -> Dict[str, A
             }
         
         # Format context
-        concepts = search_result["results"]
+        concepts = valid_results
         context_parts = []
         
         for concept in concepts:
