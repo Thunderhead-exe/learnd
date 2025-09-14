@@ -265,7 +265,7 @@ async def learn_from_text(text: str, context: Optional[str] = None) -> Dict[str,
         
         if not concepts:
             return {
-                "success": true,
+                "success": True,
                 "concepts_learned": [],
                 "total_concepts": 0,
                 "message": "No significant concepts found to learn"
@@ -278,7 +278,7 @@ async def learn_from_text(text: str, context: Optional[str] = None) -> Dict[str,
             stored_concepts.append(concept)
         
         return {
-            "success": true,
+            "success": True,
             "concepts_learned": stored_concepts,
             "total_concepts": len(stored_concepts),
             "message": f"Successfully learned {len(stored_concepts)} concepts",
@@ -287,7 +287,7 @@ async def learn_from_text(text: str, context: Optional[str] = None) -> Dict[str,
         
     except Exception as e:
         return {
-            "success": false,
+            "success": False,
             "error": str(e),
             "concepts_learned": [],
             "total_concepts": 0
@@ -438,7 +438,7 @@ async def smart_response_with_learning(user_input: str, intended_response: Optio
         enhanced_prompt += "Please provide a response that takes into account this learned context."
         
         return {
-            "success": true,
+            "success": True,
             "learning_results": learning_results,
             "relevant_context": context_results,
             "response_learning": response_learning,
@@ -449,7 +449,7 @@ async def smart_response_with_learning(user_input: str, intended_response: Optio
         
     except Exception as e:
         return {
-            "success": false,
+            "success": False,
             "error": str(e),
             "enhanced_prompt": f"User Input: {user_input}\n\nNote: Learning system encountered an error.",
             "knowledge_base_size": len(concepts_storage)
@@ -563,7 +563,7 @@ async def reset_learning() -> Dict[str, Any]:
         interactions_log.clear()
         
         return {
-            "success": true,
+            "success": True,
             "message": "All learning data has been cleared",
             "previous_stats": previous_stats,
             "current_stats": {
@@ -574,7 +574,7 @@ async def reset_learning() -> Dict[str, Any]:
         
     except Exception as e:
         return {
-            "success": false,
+            "success": False,
             "error": str(e),
             "message": "Failed to reset learning data"
         }
