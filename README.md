@@ -92,8 +92,15 @@ QDRANT_API_KEY=your_actual_qdrant_api_key
 ```
 
 6. **Start the MCP server:**
+
+For local development:
 ```bash
 uv run fastmcp run learnd.mcp_server:mcp
+```
+
+For deployment (avoids import issues):
+```bash
+uv run fastmcp run deploy_server:mcp
 ```
 
 The server will start on `http://localhost:8000` with 8 MCP tools available.
@@ -147,12 +154,23 @@ async def enhanced_chat_bot(user_message: str) -> str:
 
 ### Complete Usage Guide
 
-📚 **See [USAGE_GUIDE.md](USAGE_GUIDE.md)** for:
+📚 **Documentation:**
+- **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Complete usage guide with examples
+- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Production deployment instructions
+
+**USAGE_GUIDE.md includes:**
 - Detailed tool documentation with input/output formats
 - 4 integration patterns for different use cases  
 - Performance optimization tips
 - System monitoring and maintenance
 - Complete usage demonstration
+
+**DEPLOYMENT_GUIDE.md includes:**
+- Deployment-ready server for production
+- Fixing relative import issues
+- Platform-specific instructions (AWS Lambda, Google Cloud, Azure)
+- Docker deployment
+- Troubleshooting guide
 
 ## ⚙️ Configuration
 

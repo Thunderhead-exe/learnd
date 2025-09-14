@@ -14,7 +14,10 @@ except ImportError:
     MISTRAL_AVAILABLE = False
     logger.warning("Mistral not available for concept extraction")
 
-from .models import LearndConfig
+try:
+    from .models import LearndConfig
+except ImportError:
+    from learnd.models import LearndConfig
 
 
 class ConceptExtractor:

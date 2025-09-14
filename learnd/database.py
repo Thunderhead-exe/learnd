@@ -14,7 +14,10 @@ from qdrant_client.http.models import (
     PointStruct, Filter, FieldCondition, MatchValue
 )
 
-from .models import Concept, Cluster, LearndConfig
+try:
+    from .models import Concept, Cluster, LearndConfig
+except ImportError:
+    from learnd.models import Concept, Cluster, LearndConfig
 
 
 class QdrantManager:

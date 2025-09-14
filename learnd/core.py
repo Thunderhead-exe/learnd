@@ -8,11 +8,18 @@ from datetime import datetime, timedelta
 import uuid
 from loguru import logger
 
-from .models import Concept, Cluster, FrequencyTracker, LearndConfig
-from .database import QdrantManager
-from .embeddings import EmbeddingManager
-from .concept_extractor import ConceptExtractor
-from .clustering import ClusteringManager
+try:
+    from .models import Concept, Cluster, FrequencyTracker, LearndConfig
+    from .database import QdrantManager
+    from .embeddings import EmbeddingManager
+    from .concept_extractor import ConceptExtractor
+    from .clustering import ClusteringManager
+except ImportError:
+    from learnd.models import Concept, Cluster, FrequencyTracker, LearndConfig
+    from learnd.database import QdrantManager
+    from learnd.embeddings import EmbeddingManager
+    from learnd.concept_extractor import ConceptExtractor
+    from learnd.clustering import ClusteringManager
 
 
 class LearndCore:

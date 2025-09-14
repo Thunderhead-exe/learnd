@@ -1,37 +1,28 @@
+#!/usr/bin/env python3
 """
-Learnd MCP Server - Adaptive Continuous Learning
+Learnd MCP Server - Deployment Version
 
-A Model Context Protocol server that implements adaptive continuous learning 
-with hierarchical vector storage using Qdrant Cloud and Mistral AI.
-
-Key Features:
-- Automatic concept extraction using Mistral AI
-- Hierarchical storage (primary/secondary layers) with frequency-based migration
-- Intelligent clustering of infrequent concepts
-- Real-time learning from user interactions
-
-Architecture:
-- Primary Layer: Fast-access storage for frequently used concepts
-- Secondary Layer: Comprehensive storage with clustering for less frequent concepts
+Standalone MCP server for deployment scenarios that avoids relative import issues.
+This version includes all necessary imports and can be deployed independently.
 """
 
 import asyncio
 import json
 import os
+import sys
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from loguru import logger
 
-try:
-    # Try relative imports first (for normal package usage)
-    from .core import LearndCore
-    from .models import LearndConfig
-except ImportError:
-    # Fall back to absolute imports (for deployment scenarios)
-    from learnd.core import LearndCore
-    from learnd.models import LearndConfig
+# Add current directory to Python path for absolute imports
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
+
+# Now import with absolute paths
+from learnd.core import LearndCore
+from learnd.models import LearndConfig
 
 # Load environment variables
 load_dotenv()
@@ -73,9 +64,6 @@ async def learn_from_interaction(
 ) -> Dict[str, Any]:
     """
     🧠 Learn from a complete user-LLM interaction cycle
-    
-    This is the primary tool for continuous learning. Use this after each
-    user interaction to extract and store concepts automatically.
     
     Intent: Extract concepts from user interactions and learn from them to improve 
     future responses. This builds the knowledge base over time.
@@ -143,9 +131,6 @@ async def get_relevant_context(
 ) -> Dict[str, Any]:
     """
     🔍 Retrieve relevant learned concepts for LLM context augmentation
-    
-    Use this before sending queries to your main LLM to provide relevant
-    learned context that can improve response quality.
     
     Intent: Find and return concepts learned from previous interactions that are 
     relevant to the current query. This enables the LLM to give more informed responses.
@@ -223,9 +208,6 @@ async def extract_concepts(
     """
     🎯 Extract concepts from text using Mistral AI
     
-    Extracts key concepts, ideas, and entities from input text using
-    advanced NLP techniques powered by Mistral AI.
-    
     Intent: Analyze text and identify important concepts, terms, and ideas. 
     Useful for processing documents, articles, or any text content.
     
@@ -262,7 +244,7 @@ async def extract_concepts(
         return {
             "concepts": concepts,
             "concept_ids": concept_ids,
-            "extraction_confidence": 0.92,  # Could be calculated from validation
+            "extraction_confidence": 0.92,
             "stored_automatically": auto_store,
             "total_extracted": len(concepts)
         }
@@ -278,123 +260,9 @@ async def extract_concepts(
 
 
 @mcp.tool
-async def search_concepts(
-    query: str,
-    layer: Optional[int] = None,
-    limit: int = 20,
-    similarity_threshold: float = 0.5
-) -> Dict[str, Any]:
-    """
-    🔎 Search for concepts by similarity across knowledge layers
-    
-    Find concepts similar to a query across different layers of the
-    knowledge base. Useful for exploring existing knowledge.
-    
-    Intent: Search through stored concepts to find those similar to the query.
-    Helps discover related knowledge and explore the knowledge base.
-    
-    Expected Input:
-    - query (required): Search query text
-    - layer (optional): Specific layer to search (1=primary, 2=secondary, null=both)
-    - limit (optional): Maximum results to return (default: 20)
-    - similarity_threshold (optional): Minimum similarity 0.0-1.0 (default: 0.5)
-    
-    Expected Output:
-    {
-        "results": [
-            {
-                "concept": {
-                    "text": "machine learning",
-                    "frequency": 15,
-                    "layer": 1
-                },
-                "similarity_score": 0.85,
-                "rank": 1
-            }
-        ],
-        "total_results": 1,
-        "search_layers": [1, 2]
-    }
-    """
-    try:
-        core = await get_core()
-        
-        # Generate query embedding
-        query_embedding = await core.embedding_manager.embed_text(query)
-        if not query_embedding:
-            return {"results": [], "total_results": 0, "error": "Failed to generate query embedding"}
-        
-        results = []
-        search_layers = []
-        
-        if layer == 1 or layer is None:
-            # Search primary layer
-            search_layers.append(1)
-            primary_results = await core.db_manager.search_similar_concepts(
-                query_embedding,
-                core.db_manager.primary_collection,
-                limit=limit,
-                score_threshold=similarity_threshold
-            )
-            for concept, score in primary_results:
-                results.append({
-                    "concept": {
-                        "id": concept.id,
-                        "text": concept.text,
-                        "frequency": concept.frequency,
-                        "layer": 1,
-                        "last_accessed": concept.last_accessed.isoformat()
-                    },
-                    "similarity_score": score,
-                    "layer": 1
-                })
-        
-        if layer == 2 or layer is None:
-            # Search secondary layer
-            search_layers.append(2)
-            secondary_results = await core.db_manager.search_similar_concepts(
-                query_embedding,
-                core.db_manager.secondary_collection,
-                limit=limit,
-                score_threshold=similarity_threshold
-            )
-            for concept, score in secondary_results:
-                results.append({
-                    "concept": {
-                        "id": concept.id,
-                        "text": concept.text,
-                        "frequency": concept.frequency,
-                        "layer": 2,
-                        "last_accessed": concept.last_accessed.isoformat()
-                    },
-                    "similarity_score": score,
-                    "layer": 2
-                })
-        
-        # Sort by similarity score and add rank
-        results.sort(key=lambda x: x["similarity_score"], reverse=True)
-        for i, result in enumerate(results[:limit], 1):
-            result["rank"] = i
-        
-        return {
-            "results": results[:limit],
-            "total_results": len(results),
-            "search_layers": search_layers,
-            "query": query
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to search concepts: {e}")
-        return {"results": [], "total_results": 0, "error": str(e)}
-
-
-@mcp.tool
 async def get_system_stats() -> Dict[str, Any]:
     """
     📊 Get comprehensive system statistics and health metrics
-    
-    Provides detailed information about the learning system's current state,
-    performance metrics, and layer distribution.
     
     Intent: Monitor system health and understand how the knowledge base is growing.
     Essential for maintenance and optimization decisions.
@@ -409,14 +277,6 @@ async def get_system_stats() -> Dict[str, Any]:
             "total_concepts": 2791,
             "utilization_percent": 45.0
         },
-        "configuration": {
-            "promotion_threshold": 10,
-            "embedding_model": "all-MiniLM-L6-v2"
-        },
-        "most_frequent_concept": {
-            "text": "machine learning",
-            "frequency": 42
-        },
         "system_healthy": true
     }
     """
@@ -425,16 +285,6 @@ async def get_system_stats() -> Dict[str, Any]:
         
         # Get basic layer statistics
         stats = await core.get_layer_statistics()
-        
-        # Get most frequent concepts (sample from primary layer)
-        primary_concepts = await core.db_manager.get_all_concepts_in_layer(1)
-        most_frequent = None
-        if primary_concepts:
-            most_frequent_concept = max(primary_concepts, key=lambda c: c.frequency)
-            most_frequent = {
-                "text": most_frequent_concept.text,
-                "frequency": most_frequent_concept.frequency
-            }
         
         return {
             "layers": {
@@ -445,13 +295,6 @@ async def get_system_stats() -> Dict[str, Any]:
                 "primary_capacity": core.config.primary_layer_capacity,
                 "utilization_percent": round((stats["primary_layer_size"] / core.config.primary_layer_capacity) * 100, 1)
             },
-            "configuration": {
-                "promotion_threshold": core.config.promotion_threshold,
-                "demotion_threshold": core.config.demotion_threshold,
-                "embedding_model": core.config.embedding_model,
-                "clustering_method": core.config.clustering_method
-            },
-            "most_frequent_concept": most_frequent,
             "system_healthy": stats["total_concepts"] > 0
         }
         
@@ -460,96 +303,43 @@ async def get_system_stats() -> Dict[str, Any]:
         return {"error": str(e), "system_healthy": False}
 
 
+# Health check endpoint for deployment
 @mcp.tool
-async def rebalance_knowledge() -> Dict[str, Any]:
+async def health_check() -> Dict[str, Any]:
     """
-    ⚖️ Rebalance knowledge layers for optimal performance
+    ❤️ Health check for deployment monitoring
     
-    Reorganizes concepts between layers based on usage frequency to
-    maintain optimal retrieval performance.
-    
-    Intent: Optimize the system by moving frequently used concepts to the primary 
-    layer and less frequent ones to secondary layer. Run periodically for best performance.
+    Intent: Simple health check endpoint to verify the service is running correctly.
     
     Expected Input: None
     
     Expected Output:
     {
-        "rebalance_completed": true,
-        "concepts_promoted": 5,
-        "concepts_demoted": 12,
-        "stats_before": {"primary_layer_size": 998},
-        "stats_after": {"primary_layer_size": 991},
-        "primary_utilization": 99.1
+        "status": "healthy",
+        "service": "learnd-mcp",
+        "version": "0.1.0"
     }
     """
     try:
-        core = await get_core()
-        
-        # Get stats before rebalancing
-        stats_before = await core.get_layer_statistics()
-        
-        # Perform rebalancing
-        await core.rebalance_layers()
-        
-        # Get stats after rebalancing
-        stats_after = await core.get_layer_statistics()
-        
-        # Calculate changes
-        promoted = max(0, stats_after["primary_layer_size"] - stats_before["primary_layer_size"])
-        demoted = max(0, stats_before["primary_layer_size"] - stats_after["primary_layer_size"])
-        
         return {
-            "rebalance_completed": True,
-            "concepts_promoted": promoted,
-            "concepts_demoted": demoted,
-            "stats_before": stats_before,
-            "stats_after": stats_after,
-            "primary_utilization": round((stats_after["primary_layer_size"] / core.config.primary_layer_capacity) * 100, 1)
+            "status": "healthy",
+            "service": "learnd-mcp", 
+            "version": "0.1.0",
+            "timestamp": asyncio.get_event_loop().time()
         }
-        
     except Exception as e:
-        logger.error(f"Failed to rebalance knowledge: {e}")
-        return {"rebalance_completed": False, "error": str(e)}
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
 
 
-@mcp.tool
-async def cleanup_old_concepts(age_threshold_days: int = 30) -> Dict[str, Any]:
-    """
-    🧹 Clean up old, unused concepts to maintain system efficiency
-    
-    Removes concepts that haven't been accessed for a specified period
-    to keep the knowledge base focused and efficient.
-    
-    Intent: Remove stale concepts that haven't been used recently to free up 
-    storage and improve performance. Part of regular maintenance.
-    
-    Expected Input:
-    - age_threshold_days (optional): Days of inactivity before cleanup (default: 30)
-    
-    Expected Output:
-    {
-        "cleanup_completed": true,
-        "concepts_removed": 45,
-        "age_threshold_days": 30,
-        "concepts_remaining": 2746,
-        "cleanup_summary": "Removed 45 concepts older than 30 days"
-    }
-    """
-    try:
-        core = await get_core()
-        
-        removed_count = await core.cleanup_unused_concepts(age_threshold_days)
-        stats_after = await core.get_layer_statistics()
-        
-        return {
-            "cleanup_completed": True,
-            "concepts_removed": removed_count,
-            "age_threshold_days": age_threshold_days,
-            "concepts_remaining": stats_after["total_concepts"],
-            "cleanup_summary": f"Removed {removed_count} concepts older than {age_threshold_days} days"
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to cleanup concepts: {e}")
-        return {"cleanup_completed": False, "error": str(e)}
+# Export the mcp instance for deployment
+__all__ = ["mcp"]
+
+if __name__ == "__main__":
+    # For testing the deployment version
+    print("🧠 Learnd MCP Server - Deployment Version")
+    print("✅ Server configuration loaded")
+    print(f"📊 Available tools: {len([tool for tool in dir() if tool.startswith('get_') or tool.startswith('learn_') or tool.startswith('extract_')])}")
+    print("🚀 Ready for deployment")

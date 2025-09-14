@@ -17,7 +17,10 @@ except ImportError:
 # Note: We now only use sentence-transformers for embeddings
 # This is compatible with Qdrant Cloud and doesn't require external API calls
 
-from .models import LearndConfig
+try:
+    from .models import LearndConfig
+except ImportError:
+    from learnd.models import LearndConfig
 
 
 class EmbeddingManager:

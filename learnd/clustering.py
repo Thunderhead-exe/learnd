@@ -18,8 +18,12 @@ except ImportError:
     SKLEARN_AVAILABLE = False
     logger.warning("scikit-learn not available, clustering functionality will be limited")
 
-from .models import Concept, Cluster, LearndConfig
-from .embeddings import EmbeddingManager
+try:
+    from .models import Concept, Cluster, LearndConfig
+    from .embeddings import EmbeddingManager
+except ImportError:
+    from learnd.models import Concept, Cluster, LearndConfig
+    from learnd.embeddings import EmbeddingManager
 
 
 class ClusteringManager:
