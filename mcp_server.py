@@ -69,7 +69,7 @@ if QDRANT_AVAILABLE:
 # Configuration
 COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'learnd-concepts')
 MISTRAL_MODEL = os.getenv('MISTRAL_MODEL', 'mistral-large-latest')
-EMBEDDING_DIMENSION = 384  # FastEmbed models typically use 384 dimensions
+EMBEDDING_DIMENSION = 1024  # Mistral embed model uses 1024 dimensions
 
 # Simple in-memory interaction log
 interactions_log = []
@@ -79,7 +79,7 @@ interactions_log = []
 # ============================================================================
 
 async def ensure_collection_exists():
-    """Ensure the Qdrant collection exists."""
+    """Ensure the Qdrant collection exists with correct dimensions."""
     if not qdrant_client:
         return False
     
@@ -88,6 +88,7 @@ async def ensure_collection_exists():
         collection_names = [col.name for col in collections.collections]
         
         if COLLECTION_NAME not in collection_names:
+            # Create new collection
             qdrant_client.create_collection(
                 collection_name=COLLECTION_NAME,
                 vectors_config=models.VectorParams(
@@ -95,7 +96,32 @@ async def ensure_collection_exists():
                     distance=models.Distance.COSINE
                 )
             )
-            print(f"✅ Created Qdrant collection: {COLLECTION_NAME}")
+            print(f"✅ Created Qdrant collection: {COLLECTION_NAME} with {EMBEDDING_DIMENSION} dimensions")
+        else:
+            # Check if existing collection has correct dimensions
+            try:
+                collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+                existing_dim = collection_info.config.params.vectors.size
+                
+                if existing_dim != EMBEDDING_DIMENSION:
+                    print(f"⚠️ Collection dimension mismatch: expected {EMBEDDING_DIMENSION}, got {existing_dim}")
+                    print(f"🔄 Recreating collection with correct dimensions...")
+                    
+                    # Delete and recreate collection
+                    qdrant_client.delete_collection(COLLECTION_NAME)
+                    qdrant_client.create_collection(
+                        collection_name=COLLECTION_NAME,
+                        vectors_config=models.VectorParams(
+                            size=EMBEDDING_DIMENSION,
+                            distance=models.Distance.COSINE
+                        )
+                    )
+                    print(f"✅ Recreated collection with {EMBEDDING_DIMENSION} dimensions")
+                else:
+                    print(f"✅ Collection exists with correct dimensions: {EMBEDDING_DIMENSION}")
+                    
+            except Exception as e:
+                print(f"⚠️ Could not check collection dimensions: {e}")
         
         return True
     except Exception as e:
@@ -556,6 +582,96 @@ async def get_system_status() -> Dict[str, Any]:
         }
 
 @mcp.tool
+async def fix_collection_dimensions() -> Dict[str, Any]:
+    """
+    🔧 Fix collection dimension mismatch
+    
+    WHAT IT DOES:
+    Checks if the Qdrant collection has the correct dimensions for Mistral embeddings
+    and recreates it if there's a mismatch.
+    
+    WHEN TO USE:
+    - When you get dimension mismatch errors
+    - After changing embedding models
+    - To ensure collection compatibility
+    
+    OUTPUT:
+    {
+        "success": true,
+        "action": "recreated",
+        "old_dimensions": 384,
+        "new_dimensions": 1024,
+        "message": "Collection recreated with correct dimensions"
+    }
+    """
+    try:
+        if not qdrant_client:
+            return {
+                "success": False,
+                "error": "Qdrant client not available"
+            }
+        
+        # Check current collection
+        try:
+            collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+            existing_dim = collection_info.config.params.vectors.size
+            points_count = collection_info.points_count
+            
+            if existing_dim == EMBEDDING_DIMENSION:
+                return {
+                    "success": True,
+                    "action": "no_change_needed",
+                    "dimensions": existing_dim,
+                    "points_count": points_count,
+                    "message": f"Collection already has correct dimensions: {existing_dim}"
+                }
+            
+            # Recreate collection with correct dimensions
+            print(f"🔄 Recreating collection: {existing_dim} → {EMBEDDING_DIMENSION} dimensions")
+            qdrant_client.delete_collection(COLLECTION_NAME)
+            
+            qdrant_client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=models.VectorParams(
+                    size=EMBEDDING_DIMENSION,
+                    distance=models.Distance.COSINE
+                )
+            )
+            
+            return {
+                "success": True,
+                "action": "recreated",
+                "old_dimensions": existing_dim,
+                "new_dimensions": EMBEDDING_DIMENSION,
+                "previous_points": points_count,
+                "message": f"Collection recreated: {existing_dim} → {EMBEDDING_DIMENSION} dimensions"
+            }
+            
+        except Exception as e:
+            # Collection might not exist, create it
+            qdrant_client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=models.VectorParams(
+                    size=EMBEDDING_DIMENSION,
+                    distance=models.Distance.COSINE
+                )
+            )
+            
+            return {
+                "success": True,
+                "action": "created",
+                "dimensions": EMBEDDING_DIMENSION,
+                "message": f"Collection created with {EMBEDDING_DIMENSION} dimensions"
+            }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to fix collection dimensions"
+        }
+
+@mcp.tool
 async def clear_memory() -> Dict[str, Any]:
     """
     🗑️ Clear all stored memories (use carefully!)
@@ -620,5 +736,6 @@ if __name__ == "__main__":
     print("  - learn_from_interaction: Extract and store concepts from interactions")
     print("  - get_relevant_context: Get learned context for queries")
     print("  - get_system_status: Check system health")
+    print("  - fix_collection_dimensions: Fix dimension mismatch issues")
     print("  - clear_memory: Clear all stored memories")
     print("🚀 Ready for deployment!")
