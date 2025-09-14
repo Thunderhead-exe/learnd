@@ -1,319 +1,197 @@
-# 🧠 Learnd: Adaptive Continuous Learning MCP Server
+# 🧠 Learnd - Simplified Adaptive Learning MCP Server
 
-**Learnd** is a Model Context Protocol (MCP) server that implements adaptive continuous learning with hierarchical vector storage. It automatically extracts concepts from user interactions using **Mistral AI**, stores them in **Qdrant Cloud**, and provides intelligent retrieval for LLM augmentation.
+A streamlined **single-file** Model Context Protocol server that learns from every interaction and provides intelligent context to enhance LLM responses.
 
-## 🌟 Features
+## 🚀 Key Features
 
-- **Adaptive Learning**: Automatically extracts and learns concepts from user interactions
-- **Hierarchical Storage**: Two-layer system (primary/secondary) with frequency-based migration  
-- **Intelligent Clustering**: Groups infrequent concepts using advanced clustering algorithms
-- **MCP Integration**: Full Model Context Protocol server for seamless LLM integration
-- **Real-time Updates**: Dynamic frequency tracking and layer optimization
-- **Cloud-Native**: Built on Qdrant Cloud and Mistral AI for scalability and reliability
-- **Lightning Fast**: Powered by `uv` for ultra-fast dependency management
+- **🔄 Auto-Learning**: Automatically extracts and stores concepts from every text input
+- **🎯 Smart Context**: Finds relevant learned knowledge to enhance responses  
+- **📝 Simple Storage**: In-memory concept storage with frequency tracking
+- **⚡ Single File**: Everything in one `mcp_server.py` file for easy deployment
+- **🛠️ Self-Documenting**: Clear explanations in every function
 
 ## 📁 Project Structure
 
 ```
 learnd/
-├── learnd/                 # Main package
-│   ├── __init__.py
-│   ├── mcp_server.py      # 🚀 Main MCP server with 8 tools
-│   ├── core.py            # Core learning engine
-│   ├── models.py          # Data models and configuration
-│   ├── database.py        # Qdrant Cloud integration
-│   ├── embeddings.py      # Sentence transformers for embeddings
-│   ├── concept_extractor.py  # Mistral AI concept extraction
-│   └── clustering.py      # Concept clustering algorithms
-├── examples/              # Usage demonstration
-│   └── mcp_usage_demo.py  # Complete usage examples
-├── tests/                 # Test suite
-├── scripts/               # Utility scripts
-│   └── validate.py        # System validation
-├── env.template          # Environment configuration template
-├── copy-env.sh           # Script to create .env from template
-├── USAGE_GUIDE.md        # 📚 Complete usage guide
-├── pyproject.toml        # uv project configuration
-└── README.md
+├── mcp_server.py          # Complete MCP server (ONLY FILE NEEDED)
+├── .env                   # Environment variables
+├── pyproject.toml         # Dependencies
+└── README.md              # This file
 ```
 
-## 🏗️ Architecture
+## 🛠️ Setup
 
-### Layer System
-- **Primary Layer (L1)**: Fast-access layer for frequently used concepts (configurable capacity)
-- **Secondary Layer (L2)**: Comprehensive storage with clustering for less frequent concepts
+1. **Clone and setup:**
+   ```bash
+   git clone <your-repo>
+   cd learnd
+   ```
 
-### Core Components
-- **Concept Extractor**: Uses secondary LLM to extract key concepts from text
-- **Embedding Manager**: Generates and manages vector embeddings
-- **Clustering Manager**: Organizes secondary layer concepts into meaningful clusters
-- **Frequency Tracker**: Monitors usage patterns and triggers layer migrations
+2. **Install dependencies:**
+   ```bash
+   uv sync
+   ```
 
-## 🚀 Quick Start
+3. **Configure environment:**
+   ```bash
+   cp env.template .env
+   # Edit .env with your API keys (optional for basic functionality)
+   ```
 
-### Prerequisites
-- Python 3.9+
-- [uv](https://github.com/astral-sh/uv) (ultra-fast Python package manager)
-- [Qdrant Cloud](https://cloud.qdrant.io) account (free tier available)
-- [Mistral AI](https://mistral.ai) API key
+4. **Start the server:**
+   ```bash
+   uv run fastmcp run mcp_server:mcp
+   ```
 
-### Installation
+## 🧠 How It Works
 
-1. **Clone and set up with uv:**
-```bash
-git clone <repository>
-cd learnd
-./scripts/setup.sh  # Installs uv and sets up the project
-```
+### Core Learning Cycle
 
-2. **Create environment file:**
-```bash
-./copy-env.sh  # Creates .env from template
-```
+1. **Learn**: `learn_from_text()` extracts concepts from any text
+2. **Store**: Concepts stored with frequency tracking  
+3. **Retrieve**: `get_relevant_context()` finds relevant learned knowledge
+4. **Enhance**: Provides context to improve LLM responses
 
-3. **Set up Qdrant Cloud:**
-   - Sign up at [cloud.qdrant.io](https://cloud.qdrant.io) (no credit card required)
-   - Create a new cluster (free 1GB tier)
-   - Copy your cluster URL and API key
+### Automatic Learning
 
-4. **Get Mistral API Key:**
-   - Sign up at [mistral.ai](https://mistral.ai)
-   - Get your API key from the dashboard
+The system automatically learns from:
+- ✅ User questions and inputs
+- ✅ Technical terms and concepts  
+- ✅ Domain-specific vocabulary
+- ✅ Frequent topics and patterns
 
-5. **Configure environment:**
-```bash
-# Edit .env file with your actual credentials:
-nano .env  # or use your preferred editor
+## 🔧 MCP Tools
 
-# Update these lines:
-MISTRAL_API_KEY=your_actual_mistral_api_key
-QDRANT_URL=https://your-cluster.gcp.cloud.qdrant.io:6333
-QDRANT_API_KEY=your_actual_qdrant_api_key
-```
-
-6. **Start the MCP server:**
-
-For local development:
-```bash
-uv run fastmcp run learnd.mcp_server:mcp
-```
-
-For deployment (avoids import issues & handles read-only filesystems):
-```bash
-uv run fastmcp run deploy_server:mcp
-```
-
-> 💡 **Deployment Note**: If you encounter "[Errno 30] Read-only file system" errors, use `deploy_server.py` which automatically handles serverless/container environments with read-only filesystems.
-
-The server will start on `http://localhost:8000` with 8 MCP tools available.
-
-## 📖 Usage
-
-### 🧠 Available MCP Tools
-
-1. **`learn_from_interaction`** - Primary learning from user interactions
-2. **`get_relevant_context`** - Context augmentation for LLM responses  
-3. **`extract_concepts`** - Manual concept extraction from text
-4. **`search_concepts`** - Knowledge exploration and discovery
-5. **`get_system_stats`** - System monitoring and health metrics
-6. **`rebalance_knowledge`** - Performance optimization
-7. **`cleanup_old_concepts`** - Maintenance and storage management
-
-### Quick Integration Example
-
-```python
-import asyncio
-from mcp_client import MCPClient
-
-async def enhanced_chat_bot(user_message: str) -> str:
-    # 1. Get relevant context from learned knowledge
-    context = await mcp_client.call_tool("get_relevant_context", {
-        "query": user_message,
-        "max_concepts": 5
-    })
-    
-    # 2. Enhance LLM prompt with learned context
-    if context["total_found"] > 0:
-        enhanced_prompt = f"""
-        User: {user_message}
-        Context: {context["formatted_context"]}
-        """
-    else:
-        enhanced_prompt = user_message
-    
-    # 3. Generate LLM response
-    response = await your_llm.generate(enhanced_prompt)
-    
-    # 4. Learn from this interaction
-    await mcp_client.call_tool("learn_from_interaction", {
-        "user_input": user_message,
-        "llm_response": response,
-        "feedback_score": 0.8
-    })
-    
-    return response
-```
-
-### Complete Usage Guide
-
-📚 **Documentation:**
-- **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Complete usage guide with examples
-- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Production deployment instructions
-
-**USAGE_GUIDE.md includes:**
-- Detailed tool documentation with input/output formats
-- 4 integration patterns for different use cases  
-- Performance optimization tips
-- System monitoring and maintenance
-- Complete usage demonstration
-
-**DEPLOYMENT_GUIDE.md includes:**
-- Deployment-ready server for production
-- Fixing relative import issues  
-- Read-only filesystem solutions
-- Platform-specific instructions (AWS Lambda, Google Cloud, Azure)
-- Docker deployment
-- Troubleshooting guide
-
-### 🔧 Quick Deployment Check
-
-Before deploying, run the diagnostic tool to check for common issues:
-
-```bash
-uv run python deployment_check.py
-```
-
-This will verify:
-- ✅ Filesystem permissions
-- ✅ Environment variables  
-- ✅ Required dependencies
-- ✅ Python path configuration
-- ✅ Cache setup
-
-## ⚙️ Configuration
-
-### Environment Variables
-```bash
-MISTRAL_API_KEY=your_mistral_api_key
-QDRANT_URL=https://your-cluster.gcp.cloud.qdrant.io:6333
-QDRANT_API_KEY=your_qdrant_api_key
-COLLECTION_NAME=learnd-concepts
-PRIMARY_LAYER_CAPACITY=1000
-PROMOTION_THRESHOLD=10
-DEMOTION_THRESHOLD=2
-```
-
-### Configuration File (`config.json`)
+### 🧠 `learn_from_text`
+**Learn concepts from any text**
 ```json
-{
-  "primary_layer_capacity": 1000,
-  "promotion_threshold": 10,
-  "demotion_threshold": 2,
-  "clustering_method": "kmeans",
-  "embedding_model": "all-MiniLM-L6-v2",
-  "concept_extraction_model": "mistral-large-latest"
+Input: {"text": "I'm building a React app with authentication"}
+Output: {
+  "success": true,
+  "concepts_learned": ["react", "authentication", "app building"],
+  "total_concepts": 3
 }
 ```
 
-## 🧪 Testing
+### 🔍 `get_relevant_context` 
+**Find relevant learned knowledge**
+```json
+Input: {"query": "How do I deploy my app?"}
+Output: {
+  "relevant_concepts": [
+    {"text": "deployment", "frequency": 5, "similarity": 0.9}
+  ],
+  "context_summary": "Based on previous learning about: deployment (mentioned 5 times)"
+}
+```
+
+### 🤖 `smart_response_with_learning`
+**Complete learning + context pipeline**
+```json
+Input: {"user_input": "Help me with React routing"}
+Output: {
+  "learning_results": {...},
+  "relevant_context": {...},
+  "enhanced_prompt": "User Input: Help me with React routing\n\nRelevant Context: react (mentioned 10 times), routing (mentioned 3 times)..."
+}
+```
+
+### 📊 `get_learning_stats`
+**View what the system has learned**
+```json
+Output: {
+  "total_concepts": 25,
+  "top_concepts": [
+    {"text": "react", "frequency": 10},
+    {"text": "deployment", "frequency": 8}
+  ]
+}
+```
+
+### 🔄 `reset_learning` 
+**Clear all learned data**
+
+### ❤️ `health_check`
+**Verify system health**
+
+## 🎯 Usage Patterns
+
+### Pattern 1: Auto-Learning Chat Bot
+```python
+# For every user interaction:
+1. Call smart_response_with_learning(user_input)
+2. Use the enhanced_prompt for your LLM
+3. System automatically learns and provides context
+```
+
+### Pattern 2: Knowledge Building
+```python  
+# Learn from documents/content:
+1. Call learn_from_text(document_content)
+2. Later use get_relevant_context(user_question)
+3. Provide context-aware responses
+```
+
+### Pattern 3: Topic Tracking
+```python
+# Monitor learning progress:
+1. Call get_learning_stats() regularly
+2. See what topics users discuss most
+3. Identify knowledge gaps
+```
+
+## ⚡ Quick Start Example
 
 ```bash
-# Run all tests
-uv run pytest
+# Start server
+uv run fastmcp run mcp_server:mcp
 
-# Run specific test file  
-uv run pytest tests/test_core.py
+# Test learning (using MCP client):
+learn_from_text {"text": "I need help with Python web development using FastAPI"}
+# → Learns: "python", "web development", "fastapi"
 
-# Run with coverage
-uv run pytest --cov=learnd
+get_relevant_context {"query": "How do I create APIs?"}  
+# → Returns: Relevant context about "python", "web development", "fastapi"
 
-# Validate installation
-uv run python scripts/validate.py
+smart_response_with_learning {"user_input": "Show me FastAPI examples"}
+# → Learns from input + provides enhanced prompt with previous context
 ```
 
-## 📊 Monitoring & Maintenance
+## 🔧 Configuration
 
-### System Health
-```python
-# Check layer statistics
-stats = await mcp_client.call_tool("get_layer_statistics")
-
-# Cleanup old concepts
-result = await mcp_client.call_tool("cleanup_unused_concepts", {
-    "age_threshold_days": 30
-})
-
-# Apply frequency decay
-await mcp_client.call_tool("apply_frequency_decay")
+### Environment Variables (Optional)
+```bash
+# For advanced features (not required for basic functionality):
+MISTRAL_API_KEY=your_key_here
+QDRANT_URL=your_qdrant_url  
+QDRANT_API_KEY=your_qdrant_key
 ```
 
-### Performance Optimization
-```python
-# Optimize vector store
-await mcp_client.call_tool("optimize_vector_store")
+### Deployment
+Simply deploy `mcp_server.py` - it contains everything needed:
+- ✅ No external dependencies on complex packages
+- ✅ Simple in-memory storage
+- ✅ Built-in error handling
+- ✅ Self-contained functionality
 
-# Rebalance layers for optimal performance
-await mcp_client.call_tool("rebalance_layers")
-```
+## 🎉 Key Improvements
 
-## 🔧 Advanced Features
+### ✅ Solved Issues:
+- **Actually learns**: Concepts are extracted and stored automatically
+- **Single file**: No complex package structure  
+- **Clear functions**: Each tool has obvious purpose and examples
+- **Auto-called**: `smart_response_with_learning` handles everything
+- **Simple storage**: In-memory storage that actually works
+- **Enhanced explanations**: Every function explains WHAT, WHEN, HOW
 
-### Custom Clustering
-The system supports multiple clustering algorithms:
-- **K-means**: Fast, works well with spherical clusters
-- **DBSCAN**: Handles arbitrary cluster shapes and noise
-- **Similarity-based**: Simple threshold-based clustering
-
-### Frequency Management
-- **Automatic Decay**: Time-based frequency reduction
-- **Dynamic Thresholds**: Configurable promotion/demotion criteria
-- **Usage Tracking**: Detailed access pattern analysis
-
-### Extensibility
-- **Custom Extractors**: Implement domain-specific concept extraction
-- **Alternative Embeddings**: Support for various embedding models
-- **Pluggable Storage**: Interface for different vector databases
-
-## 📈 Performance Metrics
-
-### Typical Performance (1000 primary concepts)
-- **Concept Storage**: < 100ms
-- **Retrieval**: < 50ms  
-- **Clustering**: < 5s (1000 concepts)
-- **Layer Migration**: < 200ms
-
-### Scalability
-- **Primary Layer**: Optimized for sub-50ms retrieval
-- **Secondary Layer**: Handles millions of concepts with clustering
-- **Memory Usage**: Configurable based on layer capacities
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-## 📝 License
-
-MIT License - see LICENSE file for details.
-
-## 🆘 Support
-
-- **Documentation**: [Full API Documentation](docs/)
-- **Issues**: GitHub Issues
-- **Discussions**: GitHub Discussions
-
-## 🎯 Roadmap
-
-- [ ] Web UI for system monitoring
-- [ ] Multi-tenant support
-- [ ] Distributed clustering
-- [ ] Advanced concept relationship mapping
-- [ ] Integration with more vector databases
-- [ ] Real-time concept drift detection
+### 🔥 Perfect for:
+- Chat applications that learn from conversations
+- Knowledge base building from documents  
+- Context-aware LLM responses
+- Topic tracking and analysis
+- Rapid prototyping and deployment
 
 ---
 
-**Learnd** - Making AI systems smarter through adaptive continuous learning 🚀
+**🚀 Deploy `mcp_server.py` and start learning from every interaction!**
