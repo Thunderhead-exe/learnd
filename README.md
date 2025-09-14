@@ -1,14 +1,15 @@
-# 🧠 Learnd - Simplified Adaptive Learning MCP Server
+# 🧠 Learnd - Simplified AI Learning MCP Server
 
-A streamlined **single-file** Model Context Protocol server that learns from every interaction and provides intelligent context to enhance LLM responses.
+A **clean and simple** Model Context Protocol server following the official Mistral + Qdrant tutorial architecture. Provides intelligent memory and learning capabilities for AI agents.
 
 ## 🚀 Key Features
 
-- **🔄 Auto-Learning**: Automatically extracts and stores concepts from every text input
-- **🎯 Smart Context**: Finds relevant learned knowledge to enhance responses  
-- **📝 Simple Storage**: In-memory concept storage with frequency tracking
-- **⚡ Single File**: Everything in one `mcp_server.py` file for easy deployment
-- **🛠️ Self-Documenting**: Clear explanations in every function
+- **🤖 Mistral AI Integration**: Uses official Mistral client for concept extraction and embeddings
+- **☁️ Qdrant Cloud Storage**: Official Qdrant client for vector storage and similarity search
+- **🔄 Auto-Learning**: Extract and store concepts from interactions automatically
+- **🎯 Memory Retrieval**: Find relevant stored information using semantic search
+- **⚡ Tutorial-Based**: Follows official Mistral + Qdrant integration patterns
+- **🛠️ Production Ready**: Simplified, reliable architecture
 
 ## 📁 Project Structure
 
@@ -36,7 +37,14 @@ learnd/
 3. **Configure environment:**
    ```bash
    cp env.template .env
-   # Edit .env with your API keys (optional for basic functionality)
+   # Edit .env with your API keys (REQUIRED for full AI functionality)
+   ```
+   
+   **Required environment variables:**
+   ```bash
+   MISTRAL_API_KEY=your_mistral_api_key
+   QDRANT_URL=https://your-cluster.cloud.qdrant.io:6333
+   QDRANT_API_KEY=your_qdrant_api_key
    ```
 
 4. **Start the server:**
@@ -46,74 +54,77 @@ learnd/
 
 ## 🧠 How It Works
 
-### Core Learning Cycle
+### Simplified Learning Pipeline
 
-1. **Learn**: `learn_from_text()` extracts concepts from any text
-2. **Store**: Concepts stored with frequency tracking  
-3. **Retrieve**: `get_relevant_context()` finds relevant learned knowledge
-4. **Enhance**: Provides context to improve LLM responses
+1. **Concept Extraction**: Mistral AI extracts key concepts from user interactions
+2. **Vector Embedding**: Mistral's embedding model creates semantic vectors
+3. **Vector Storage**: Qdrant Cloud stores embeddings with metadata
+4. **Semantic Search**: Vector similarity search finds relevant memories
+5. **Context Enhancement**: Retrieved context enhances LLM responses
 
-### Automatic Learning
+### Architecture (Following Tutorial)
 
-The system automatically learns from:
-- ✅ User questions and inputs
-- ✅ Technical terms and concepts  
-- ✅ Domain-specific vocabulary
-- ✅ Frequent topics and patterns
+- **🤖 Mistral AI**: Official client for concept extraction and embeddings
+- **☁️ Qdrant Cloud**: Official client for vector database operations
+- **🔗 MCP Tools**: Simple `qdrant_store` and `qdrant_find` operations
+- **📊 Smart Retrieval**: Semantic similarity with score thresholds
+- **🧠 Auto-Learning**: Automated concept extraction from interactions
 
 ## 🔧 MCP Tools
 
-### 🧠 `learn_from_text`
-**Learn concepts from any text**
+### 🗃️ `qdrant_store`
+**Store information in vector memory**
 ```json
-Input: {"text": "I'm building a React app with authentication"}
+Input: {"text": "React is a JavaScript library for building user interfaces", "context": "web development"}
 Output: {
   "success": true,
-  "concepts_learned": ["react", "authentication", "app building"],
-  "total_concepts": 3
+  "message": "Stored successfully with ID: abc-123",
+  "stored_text": "React is a JavaScript library...",
+  "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
 
-### 🔍 `get_relevant_context` 
-**Find relevant learned knowledge**
+### 🔍 `qdrant_find` 
+**Find similar information from memory**
 ```json
-Input: {"query": "How do I deploy my app?"}
+Input: {"query": "JavaScript frameworks", "max_results": 3}
 Output: {
-  "relevant_concepts": [
-    {"text": "deployment", "frequency": 5, "similarity": 0.9}
+  "results": [
+    {"text": "React is a JavaScript library...", "score": 0.95, "stored_at": "2024-01-15T10:30:00Z"}
   ],
-  "context_summary": "Based on previous learning about: deployment (mentioned 5 times)"
+  "total_found": 1,
+  "query": "JavaScript frameworks"
 }
 ```
 
-### 🤖 `smart_response_with_learning`
-**Complete learning + context pipeline**
+### 🧠 `learn_from_interaction`
+**Extract and store concepts from interactions**
 ```json
-Input: {"user_input": "Help me with React routing"}
+Input: {"user_input": "How do I deploy a React app?", "llm_response": "You can deploy using Vercel...", "importance": "high"}
 Output: {
-  "learning_results": {...},
-  "relevant_context": {...},
-  "enhanced_prompt": "User Input: Help me with React routing\n\nRelevant Context: react (mentioned 10 times), routing (mentioned 3 times)..."
+  "success": true,
+  "concepts_stored": ["react deployment", "vercel", "web hosting"],
+  "total_stored": 3
 }
 ```
 
-### 📊 `get_learning_stats`
-**View what the system has learned**
+### 🎯 `get_relevant_context`
+**Get learned context for queries**
 ```json
+Input: {"query": "deployment help", "max_concepts": 5}
 Output: {
-  "total_concepts": 25,
-  "top_concepts": [
-    {"text": "react", "frequency": 10},
-    {"text": "deployment", "frequency": 8}
-  ]
+  "context_found": true,
+  "formatted_context": "Based on previous learning: 'react deployment' (relevance: 0.95), 'vercel' (relevance: 0.89)...",
+  "concepts": [...],
+  "total_found": 2
 }
 ```
 
-### 🔄 `reset_learning` 
-**Clear all learned data**
+### ❤️ `get_system_status`
+**Check system health and configuration**
 
-### ❤️ `health_check`
-**Verify system health**
+### 🗑️ `clear_memory`
+**Clear all stored memories (destructive!)**
 
 ## 🎯 Usage Patterns
 

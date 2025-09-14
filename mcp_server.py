@@ -1,32 +1,21 @@
 #!/usr/bin/env python3
 """
-Learnd MCP Server - Simplified Single-File Implementation
+Learnd MCP Server - Simplified AI Learning Server
 
-A streamlined Model Context Protocol server for adaptive continuous learning.
-This single file contains all functionality needed for deployment.
+Following the official Mistral + Qdrant integration pattern for adaptive learning.
+This server provides simple tools for learning and retrieving concepts using AI.
 
-🧠 Core Concept: Learn from every interaction and provide relevant context
-🔄 Auto-Learning: Automatically extracts and stores concepts from user inputs
-🎯 Smart Retrieval: Finds relevant learned concepts to enhance LLM responses
+Based on: Mistral + Qdrant Cloud tutorial architecture
 """
 
 import asyncio
 import json
 import os
-import re
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any, Tuple
-import tempfile
-import warnings
-
-# Environment setup for deployment
-os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
-os.environ.setdefault('TRANSFORMERS_CACHE', tempfile.gettempdir())
-warnings.filterwarnings("ignore")
-
-from fastmcp import FastMCP
+from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
+from fastmcp import FastMCP
 
 # Load environment variables
 load_dotenv()
@@ -34,222 +23,194 @@ load_dotenv()
 # Initialize MCP server
 mcp = FastMCP("learnd")
 
+# AI Libraries
+try:
+    from mistralai import Mistral
+    MISTRAL_AVAILABLE = True
+except ImportError:
+    MISTRAL_AVAILABLE = False
+    print("⚠️ MistralAI not available. Install with: uv add mistralai")
+
+try:
+    from qdrant_client import QdrantClient, models
+    QDRANT_AVAILABLE = True
+except ImportError:
+    QDRANT_AVAILABLE = False
+    print("⚠️ Qdrant client not available. Install with: uv add qdrant-client")
+
 # ============================================================================
-# SIMPLE IN-MEMORY STORAGE (for demonstration - replace with persistent DB)
+# CONFIGURATION
 # ============================================================================
 
-# Simple storage dictionaries
-concepts_storage = {}  # concept_id -> {text, frequency, last_used, embedding}
-interactions_log = []  # List of all interactions for learning
+# Initialize clients
+mistral_client = None
+qdrant_client = None
+
+if MISTRAL_AVAILABLE:
+    api_key = os.getenv('MISTRAL_API_KEY')
+    if api_key:
+        mistral_client = Mistral(api_key=api_key)
+        print("✅ Mistral client initialized")
+    else:
+        print("⚠️ MISTRAL_API_KEY not found in environment variables")
+
+if QDRANT_AVAILABLE:
+    qdrant_url = os.getenv('QDRANT_URL')
+    qdrant_api_key = os.getenv('QDRANT_API_KEY')
+    if qdrant_url and qdrant_api_key:
+        try:
+            qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+            print("✅ Qdrant client initialized")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize Qdrant: {e}")
+    else:
+        print("⚠️ QDRANT_URL or QDRANT_API_KEY not found")
+
+# Configuration
+COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'learnd-concepts')
+MISTRAL_MODEL = os.getenv('MISTRAL_MODEL', 'mistral-large-latest')
+EMBEDDING_DIMENSION = 384  # FastEmbed models typically use 384 dimensions
+
+# Simple in-memory interaction log
+interactions_log = []
 
 # ============================================================================
-# CORE LEARNING FUNCTIONS
+# QDRANT OPERATIONS (Following tutorial pattern)
 # ============================================================================
 
-def extract_concepts_simple(text: str) -> List[str]:
-    """
-    Simple concept extraction using basic NLP techniques.
-    Extracts meaningful terms, phrases, and topics from text.
+async def ensure_collection_exists():
+    """Ensure the Qdrant collection exists."""
+    if not qdrant_client:
+        return False
     
-    Why: We need to identify what the user is talking about to learn from it.
-    How: Uses regex patterns and keyword detection to find important concepts.
-    """
-    if not text or len(text.strip()) < 10:
-        return []
-    
-    # Clean and normalize text
-    text = text.lower().strip()
-    
-    # Extract potential concepts using multiple patterns
-    concepts = []
-    
-    # 1. Technical terms (words with specific patterns)
-    tech_patterns = [
-        r'\b(?:api|sdk|database|server|client|framework|library|algorithm)\b',
-        r'\b(?:machine learning|artificial intelligence|neural network|deep learning)\b',
-        r'\b(?:python|javascript|typescript|react|node|docker|kubernetes)\b',
-        r'\b(?:authentication|authorization|security|encryption|token)\b',
-        r'\b(?:frontend|backend|fullstack|microservice|deployment)\b',
-    ]
-    
-    for pattern in tech_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        concepts.extend(matches)
-    
-    # 2. Domain-specific terms (capitalized words, acronyms)
-    domain_terms = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
-    concepts.extend([term.lower() for term in domain_terms if len(term) > 3])
-    
-    # 3. Important phrases (quoted text, "how to" patterns)
-    quoted_text = re.findall(r'"([^"]+)"', text)
-    concepts.extend(quoted_text)
-    
-    how_to_patterns = re.findall(r'how to\s+([^.!?]+)', text, re.IGNORECASE)
-    concepts.extend([f"how to {pattern.strip()}" for pattern in how_to_patterns])
-    
-    # 4. Key nouns and noun phrases (simple extraction)
-    important_words = re.findall(r'\b(?:error|problem|issue|solution|method|function|class|component|service|system|process|workflow|strategy|approach|technique|implementation|configuration|setup|integration|optimization|performance|scalability|monitoring|testing|debugging|troubleshooting)\b', text, re.IGNORECASE)
-    concepts.extend(important_words)
-    
-    # Clean and deduplicate
-    cleaned_concepts = []
-    for concept in concepts:
-        concept = concept.strip().lower()
-        if len(concept) >= 3 and concept not in cleaned_concepts:
-            cleaned_concepts.append(concept)
-    
-    return cleaned_concepts[:10]  # Limit to top 10 concepts
-
-def simple_embedding(text: str) -> List[float]:
-    """
-    Simple text embedding using character and word features.
-    Creates a basic vector representation for similarity matching.
-    
-    Why: We need to compare concepts for similarity and relevance.
-    How: Uses character frequencies and simple word features to create vectors.
-    """
-    # Normalize text
-    text = text.lower().strip()
-    
-    # Create a simple 100-dimensional embedding
-    embedding = [0.0] * 100
-    
-    # Character frequency features (first 26 dimensions)
-    for i, char in enumerate('abcdefghijklmnopqrstuvwxyz'):
-        if i < 26:
-            embedding[i] = text.count(char) / max(len(text), 1)
-    
-    # Length features
-    embedding[26] = min(len(text) / 50.0, 1.0)  # Normalized length
-    embedding[27] = len(text.split()) / max(len(text.split()), 1)  # Words per char
-    
-    # Simple word presence features (28-70)
-    common_words = ['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'man', 'car', 'run', 'use', 'big', 'end', 'far', 'off', 'own', 'say']
-    for i, word in enumerate(common_words):
-        if i < 42:
-            embedding[28 + i] = 1.0 if word in text else 0.0
-    
-    # Technical term presence (70-90)
-    tech_terms = ['api', 'code', 'data', 'file', 'user', 'system', 'server', 'client', 'error', 'function', 'class', 'method', 'object', 'array', 'string', 'number', 'boolean', 'null', 'undefined', 'variable']
-    for i, term in enumerate(tech_terms):
-        if i < 20:
-            embedding[70 + i] = 1.0 if term in text else 0.0
-    
-    # Hash features for remaining dimensions
-    text_hash = hash(text)
-    for i in range(90, 100):
-        embedding[i] = ((text_hash >> i) & 1) * 0.1
-    
-    return embedding
-
-def calculate_similarity(emb1: List[float], emb2: List[float]) -> float:
-    """Calculate cosine similarity between two embeddings."""
-    if len(emb1) != len(emb2):
-        return 0.0
-    
-    dot_product = sum(a * b for a, b in zip(emb1, emb2))
-    norm1 = sum(a * a for a in emb1) ** 0.5
-    norm2 = sum(b * b for b in emb2) ** 0.5
-    
-    if norm1 == 0 or norm2 == 0:
-        return 0.0
-    
-    return dot_product / (norm1 * norm2)
-
-def store_concept(concept_text: str) -> str:
-    """
-    Store a concept in memory with frequency tracking.
-    
-    Why: We need to remember what the user talks about and how often.
-    How: Creates or updates concept entries with usage frequency.
-    """
-    concept_id = str(uuid.uuid4())
-    embedding = simple_embedding(concept_text)
-    
-    # Check if concept already exists (similar concept)
-    for existing_id, existing_concept in concepts_storage.items():
-        similarity = calculate_similarity(embedding, existing_concept['embedding'])
-        if similarity > 0.8:  # High similarity threshold
-            # Update existing concept
-            existing_concept['frequency'] += 1
-            existing_concept['last_used'] = datetime.now(timezone.utc).isoformat()
-            return existing_id
-    
-    # Store new concept
-    concepts_storage[concept_id] = {
-        'text': concept_text,
-        'frequency': 1,
-        'last_used': datetime.now(timezone.utc).isoformat(),
-        'embedding': embedding,
-        'created': datetime.now(timezone.utc).isoformat()
-    }
-    
-    return concept_id
-
-def find_relevant_concepts(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-    """
-    Find concepts most relevant to a query.
-    
-    Why: When the user asks something, we want to provide related context from past learning.
-    How: Compares query embedding with stored concept embeddings using similarity.
-    """
-    if not concepts_storage:
-        return []
-    
-    query_embedding = simple_embedding(query)
-    concept_scores = []
-    
-    for concept_id, concept_data in concepts_storage.items():
-        similarity = calculate_similarity(query_embedding, concept_data['embedding'])
-        # Boost score by frequency (more frequently mentioned = more important)
-        boosted_score = similarity * (1 + concept_data['frequency'] * 0.1)
+    try:
+        collections = qdrant_client.get_collections()
+        collection_names = [col.name for col in collections.collections]
         
-        concept_scores.append({
-            'id': concept_id,
-            'text': concept_data['text'],
-            'frequency': concept_data['frequency'],
-            'similarity': similarity,
-            'score': boosted_score,
-            'last_used': concept_data['last_used']
-        })
+        if COLLECTION_NAME not in collection_names:
+            qdrant_client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=models.VectorParams(
+                    size=EMBEDDING_DIMENSION,
+                    distance=models.Distance.COSINE
+                )
+            )
+            print(f"✅ Created Qdrant collection: {COLLECTION_NAME}")
+        
+        return True
+    except Exception as e:
+        print(f"⚠️ Failed to ensure collection exists: {e}")
+        return False
+
+async def store_in_qdrant(text: str, metadata: Dict[str, Any] = None) -> str:
+    """Store text in Qdrant using Mistral for embedding generation."""
+    if not qdrant_client or not mistral_client:
+        return "error: Missing Qdrant or Mistral client"
     
-    # Sort by boosted score and return top results
-    concept_scores.sort(key=lambda x: x['score'], reverse=True)
-    return concept_scores[:max_results]
+    try:
+        await ensure_collection_exists()
+        
+        # Generate embedding using Mistral
+        embeddings_response = mistral_client.embeddings.create(
+            model="mistral-embed",
+            inputs=[text]
+        )
+        embedding = embeddings_response.data[0].embedding
+        
+        # Create point with metadata
+        point_id = str(uuid.uuid4())
+        payload = {
+            "text": text,
+            "stored_at": datetime.now(timezone.utc).isoformat(),
+            **(metadata or {})
+        }
+        
+        # Store in Qdrant
+        qdrant_client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector=embedding,
+                    payload=payload
+                )
+            ]
+        )
+        
+        return f"Stored successfully with ID: {point_id}"
+        
+    except Exception as e:
+        return f"Error storing in Qdrant: {str(e)}"
+
+async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Find similar content in Qdrant."""
+    if not qdrant_client or not mistral_client:
+        return [{"error": "Missing Qdrant or Mistral client"}]
+    
+    try:
+        await ensure_collection_exists()
+        
+        # Generate embedding for query
+        embeddings_response = mistral_client.embeddings.create(
+            model="mistral-embed",
+            inputs=[query]
+        )
+        query_embedding = embeddings_response.data[0].embedding
+        
+        # Search in Qdrant
+        search_results = qdrant_client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=query_embedding,
+            limit=limit,
+            with_payload=True,
+            score_threshold=0.3
+        )
+        
+        # Format results
+        results = []
+        for result in search_results:
+            results.append({
+                "text": result.payload.get("text", ""),
+                "score": round(result.score, 3),
+                "stored_at": result.payload.get("stored_at", ""),
+                "metadata": {k: v for k, v in result.payload.items() 
+                           if k not in ["text", "stored_at"]}
+            })
+        
+        return results
+        
+    except Exception as e:
+        return [{"error": f"Error searching Qdrant: {str(e)}"}]
 
 # ============================================================================
-# MCP TOOLS - SIMPLE AND EFFECTIVE
+# MCP TOOLS (Simplified, following tutorial pattern)
 # ============================================================================
 
 @mcp.tool
-async def learn_from_text(text: str, context: Optional[str] = None) -> Dict[str, Any]:
+async def qdrant_store(text: str, context: Optional[str] = None) -> Dict[str, Any]:
     """
-    🧠 Automatically learn concepts from any text input
+    🗃️ Store information in vector memory
     
     WHAT IT DOES:
-    - Takes any text and extracts important concepts/topics
-    - Stores these concepts with frequency tracking  
-    - Updates knowledge base for future use
+    Stores text in Qdrant vector database using Mistral embeddings.
+    Similar to the tutorial's 'qdrant-store' tool but for learning concepts.
     
     WHEN TO USE:
-    - Call this with every user input to build knowledge
-    - Use for documents, conversations, any learning material
+    - Store important information for later recall
+    - Save concepts learned from user interactions
+    - Build persistent knowledge base
     
-    INPUT: 
-    - text (required): Any text to learn from
-    - context (optional): Additional context about the text
+    INPUT:
+    - text (required): The information to store
+    - context (optional): Additional context about the information
     
     OUTPUT:
     {
         "success": true,
-        "concepts_learned": ["machine learning", "neural networks"],
-        "total_concepts": 2,
-        "message": "Successfully learned 2 new concepts"
+        "message": "Stored successfully with ID: abc-123",
+        "stored_text": "The stored information...",
+        "timestamp": "2024-01-15T10:30:00Z"
     }
-    
-    EXAMPLE:
-    learn_from_text("I'm building a React app with authentication")
-    -> Learns: "react", "authentication", "app building"
     """
     try:
         # Log the interaction
@@ -257,367 +218,333 @@ async def learn_from_text(text: str, context: Optional[str] = None) -> Dict[str,
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'text': text,
             'context': context,
-            'type': 'learning'
+            'action': 'store'
         })
         
-        # Extract concepts
-        concepts = extract_concepts_simple(text)
+        # Prepare metadata
+        metadata = {"interaction_context": context} if context else {}
         
-        if not concepts:
-            return {
-                "success": True,
-                "concepts_learned": [],
-                "total_concepts": 0,
-                "message": "No significant concepts found to learn"
-            }
-        
-        # Store each concept
-        stored_concepts = []
-        for concept in concepts:
-            store_concept(concept)
-            stored_concepts.append(concept)
+        # Store in Qdrant
+        result_message = await store_in_qdrant(text, metadata)
         
         return {
-            "success": True,
-            "concepts_learned": stored_concepts,
-            "total_concepts": len(stored_concepts),
-            "message": f"Successfully learned {len(stored_concepts)} concepts",
-            "knowledge_base_size": len(concepts_storage)
+            "success": "error" not in result_message.lower(),
+            "message": result_message,
+            "stored_text": text[:100] + "..." if len(text) > 100 else text,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "collection": COLLECTION_NAME
         }
         
     except Exception as e:
         return {
             "success": False,
             "error": str(e),
-            "concepts_learned": [],
-            "total_concepts": 0
+            "message": "Failed to store information"
+        }
+
+@mcp.tool
+async def qdrant_find(query: str, max_results: int = 5) -> Dict[str, Any]:
+    """
+    🔍 Find similar information from vector memory
+    
+    WHAT IT DOES:
+    Searches Qdrant vector database for information similar to the query.
+    Similar to the tutorial's 'qdrant-find' tool but for learned concepts.
+    
+    WHEN TO USE:
+    - Recall previously stored information
+    - Find relevant context for current questions
+    - Retrieve learned concepts related to a topic
+    
+    INPUT:
+    - query (required): What to search for
+    - max_results (optional): Maximum number of results (default: 5)
+    
+    OUTPUT:
+    {
+        "results": [
+            {
+                "text": "Found information...",
+                "score": 0.95,
+                "stored_at": "2024-01-15T10:30:00Z"
+            }
+        ],
+        "total_found": 1,
+        "query": "original search query"
+    }
+    """
+    try:
+        # Log the interaction
+        interactions_log.append({
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'query': query,
+            'action': 'find'
+        })
+        
+        # Search in Qdrant
+        results = await find_in_qdrant(query, max_results)
+        
+        # Filter out error results
+        valid_results = [r for r in results if "error" not in r]
+        error_results = [r for r in results if "error" in r]
+        
+        if error_results:
+            return {
+                "success": False,
+                "error": error_results[0]["error"],
+                "results": [],
+                "total_found": 0,
+                "query": query
+            }
+        
+        return {
+            "success": True,
+            "results": valid_results,
+            "total_found": len(valid_results),
+            "query": query,
+            "collection": COLLECTION_NAME
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "results": [],
+            "total_found": 0,
+            "query": query
+        }
+
+@mcp.tool
+async def learn_from_interaction(
+    user_input: str, 
+    llm_response: Optional[str] = None,
+    importance: str = "normal"
+) -> Dict[str, Any]:
+    """
+    🧠 Learn and store concepts from user interaction
+    
+    WHAT IT DOES:
+    Extracts important concepts from user interactions using Mistral AI
+    and stores them in Qdrant for future retrieval.
+    
+    WHEN TO USE:
+    - Process every user-LLM interaction
+    - Automatically build knowledge from conversations
+    - Extract and store key information
+    
+    INPUT:
+    - user_input (required): What the user said/asked
+    - llm_response (optional): The LLM's response
+    - importance (optional): "low", "normal", "high" - affects storage priority
+    
+    OUTPUT:
+    {
+        "success": true,
+        "concepts_stored": ["concept1", "concept2"],
+        "storage_results": ["Stored successfully...", "..."],
+        "total_stored": 2
+    }
+    """
+    try:
+        # Use Mistral to extract key concepts
+        if not mistral_client:
+            return {
+                "success": False,
+                "error": "Mistral client not available",
+                "concepts_stored": [],
+                "total_stored": 0
+            }
+        
+        # Create extraction prompt
+        extraction_prompt = f"""
+Extract the 3-5 most important concepts, topics, or pieces of information from this interaction:
+
+User: {user_input}
+{f"Assistant: {llm_response}" if llm_response else ""}
+
+Return only a JSON array of strings with the key concepts:
+["concept1", "concept2", "concept3"]
+"""
+        
+        # Get concepts from Mistral
+        response = mistral_client.chat.complete(
+            model=MISTRAL_MODEL,
+            messages=[{"role": "user", "content": extraction_prompt}],
+            temperature=0.3,
+            max_tokens=200
+        )
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Parse concepts
+        try:
+            start_idx = content.find('[')
+            end_idx = content.rfind(']') + 1
+            if start_idx != -1 and end_idx != -1:
+                concepts = json.loads(content[start_idx:end_idx])
+            else:
+                concepts = []
+        except:
+            concepts = []
+        
+        if not concepts:
+            return {
+                "success": True,
+                "message": "No significant concepts found to store",
+                "concepts_stored": [],
+                "total_stored": 0
+            }
+        
+        # Store each concept
+        storage_results = []
+        for concept in concepts:
+            metadata = {
+                "importance": importance,
+                "source": "interaction",
+                "user_input": user_input[:200],  # First 200 chars
+                "interaction_id": str(uuid.uuid4())[:8]
+            }
+            
+            result = await store_in_qdrant(concept, metadata)
+            storage_results.append(result)
+        
+        return {
+            "success": True,
+            "concepts_stored": concepts,
+            "storage_results": storage_results,
+            "total_stored": len(concepts),
+            "interaction_logged": True
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "concepts_stored": [],
+            "total_stored": 0
         }
 
 @mcp.tool
 async def get_relevant_context(query: str, max_concepts: int = 5) -> Dict[str, Any]:
     """
-    🔍 Get learned knowledge relevant to a query
+    🎯 Get relevant learned context for a query
     
     WHAT IT DOES:
-    - Searches all learned concepts for ones relevant to your query
-    - Returns the most relevant concepts with context
-    - Provides formatted context to enhance LLM responses
+    Searches for relevant learned concepts and formats them as context
+    to enhance LLM responses.
     
     WHEN TO USE:
     - Before generating responses to user questions
-    - When you need background knowledge on a topic
-    - To check what the system has learned about something
+    - Get background knowledge on a topic
+    - Enhance LLM responses with learned context
     
     INPUT:
-    - query (required): What you want to find relevant knowledge about
-    - max_concepts (optional): Maximum number of concepts to return (default: 5)
+    - query (required): The user's question or topic
+    - max_concepts (optional): Maximum concepts to retrieve (default: 5)
     
     OUTPUT:
     {
-        "relevant_concepts": [
-            {
-                "text": "machine learning",
-                "frequency": 5,
-                "similarity": 0.85,
-                "last_used": "2024-01-15T10:30:00Z"
-            }
-        ],
-        "context_summary": "Based on previous conversations about: machine learning (mentioned 5 times)...",
-        "total_found": 1
+        "context_found": true,
+        "formatted_context": "Based on previous learning: concept1, concept2...",
+        "concepts": [...],
+        "total_found": 2
     }
-    
-    EXAMPLE:
-    get_relevant_context("How do I train a model?")
-    -> Returns: concepts about "machine learning", "training", "models"
     """
     try:
-        # Log the query
-        interactions_log.append({
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'text': query,
-            'type': 'retrieval'
-        })
+        # Search for relevant concepts
+        search_result = await qdrant_find(query, max_concepts)
         
-        # Find relevant concepts
-        relevant = find_relevant_concepts(query, max_concepts)
-        
-        if not relevant:
+        if not search_result["success"] or not search_result["results"]:
             return {
-                "relevant_concepts": [],
-                "context_summary": "No relevant previous knowledge found for this query.",
+                "context_found": False,
+                "formatted_context": "No relevant previous learning found for this query.",
+                "concepts": [],
                 "total_found": 0,
-                "suggestion": "Try using learn_from_text to build knowledge first"
+                "suggestion": "Try using learn_from_interaction to build knowledge first"
             }
         
-        # Create context summary
+        # Format context
+        concepts = search_result["results"]
         context_parts = []
-        for concept in relevant:
-            freq_text = f"mentioned {concept['frequency']} times" if concept['frequency'] > 1 else "mentioned once"
-            context_parts.append(f"'{concept['text']}' ({freq_text})")
         
-        context_summary = f"Based on previous learning about: {', '.join(context_parts[:3])}"
-        if len(relevant) > 3:
-            context_summary += f" and {len(relevant) - 3} other related topics"
+        for concept in concepts:
+            score_text = f"(relevance: {concept['score']})"
+            context_parts.append(f"'{concept['text']}' {score_text}")
+        
+        formatted_context = f"Based on previous learning: {', '.join(context_parts[:3])}"
+        if len(concepts) > 3:
+            formatted_context += f" and {len(concepts) - 3} other related concepts"
         
         return {
-            "relevant_concepts": relevant,
-            "context_summary": context_summary,
-            "total_found": len(relevant),
-            "knowledge_base_size": len(concepts_storage)
+            "context_found": True,
+            "formatted_context": formatted_context,
+            "concepts": concepts,
+            "total_found": len(concepts),
+            "query": query
         }
         
     except Exception as e:
         return {
-            "relevant_concepts": [],
-            "context_summary": f"Error retrieving context: {str(e)}",
+            "context_found": False,
+            "formatted_context": f"Error retrieving context: {str(e)}",
+            "concepts": [],
             "total_found": 0,
             "error": str(e)
         }
 
 @mcp.tool
-async def smart_response_with_learning(user_input: str, intended_response: Optional[str] = None) -> Dict[str, Any]:
+async def get_system_status() -> Dict[str, Any]:
     """
-    🤖 Complete learning + context pipeline for LLM responses
+    ❤️ Check system status and configuration
     
     WHAT IT DOES:
-    - Automatically learns from user input
-    - Finds relevant context from previous learning
-    - Provides enhanced context for better LLM responses
-    - This is the main function that combines everything
-    
-    WHEN TO USE:
-    - Call this for EVERY user interaction
-    - Use as the primary function for chat applications
-    - Perfect for enhancing LLM conversations with learned context
-    
-    INPUT:
-    - user_input (required): What the user said/asked
-    - intended_response (optional): LLM's planned response (for learning)
-    
-    OUTPUT:
-    {
-        "learning_results": {...},        // What was learned from input
-        "relevant_context": {...},       // What context was found
-        "enhanced_prompt": "...",        // Formatted prompt with context
-        "success": true
-    }
-    
-    EXAMPLE WORKFLOW:
-    1. User: "How do I deploy a React app?"
-    2. This function:
-       - Learns: "react", "deployment", "app"
-       - Finds context: Previous mentions of "react", "deployment"
-       - Returns enhanced prompt with this context
-    3. LLM uses enhanced prompt for better response
-    """
-    try:
-        # Step 1: Learn from user input
-        learning_results = await learn_from_text(user_input, "user_interaction")
-        
-        # Step 2: Get relevant context
-        context_results = await get_relevant_context(user_input, max_concepts=8)
-        
-        # Step 3: Learn from LLM response if provided
-        response_learning = None
-        if intended_response:
-            response_learning = await learn_from_text(intended_response, "llm_response")
-        
-        # Step 4: Create enhanced prompt
-        enhanced_prompt = f"User Input: {user_input}\n\n"
-        
-        if context_results.get('total_found', 0) > 0:
-            enhanced_prompt += f"Relevant Context from Previous Learning:\n"
-            enhanced_prompt += f"{context_results['context_summary']}\n\n"
-            
-            # Add specific concepts
-            enhanced_prompt += "Key concepts to consider:\n"
-            for concept in context_results['relevant_concepts'][:5]:
-                enhanced_prompt += f"- {concept['text']} (frequency: {concept['frequency']})\n"
-            enhanced_prompt += "\n"
-        
-        enhanced_prompt += "Please provide a response that takes into account this learned context."
-        
-        return {
-            "success": True,
-            "learning_results": learning_results,
-            "relevant_context": context_results,
-            "response_learning": response_learning,
-            "enhanced_prompt": enhanced_prompt,
-            "knowledge_base_size": len(concepts_storage),
-            "total_interactions": len(interactions_log)
-        }
-        
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "enhanced_prompt": f"User Input: {user_input}\n\nNote: Learning system encountered an error.",
-            "knowledge_base_size": len(concepts_storage)
-        }
-
-@mcp.tool
-async def get_learning_stats() -> Dict[str, Any]:
-    """
-    📊 Get statistics about what the system has learned
-    
-    WHAT IT DOES:
-    - Shows total concepts learned
-    - Lists most frequent concepts
-    - Provides learning activity overview
-    - Helps monitor system learning progress
-    
-    WHEN TO USE:
-    - To check if learning is working
-    - To see what topics are most discussed
-    - For system monitoring and debugging
-    
-    OUTPUT:
-    {
-        "total_concepts": 25,
-        "total_interactions": 50,
-        "top_concepts": [
-            {"text": "react", "frequency": 10},
-            {"text": "deployment", "frequency": 8}
-        ],
-        "recent_activity": "Active learning in progress"
-    }
-    """
-    try:
-        if not concepts_storage:
-            return {
-                "total_concepts": 0,
-                "total_interactions": len(interactions_log),
-                "top_concepts": [],
-                "recent_activity": "No learning data yet - try using learn_from_text",
-                "status": "empty"
-            }
-        
-        # Get top concepts by frequency
-        concepts_by_freq = []
-        for concept_id, concept_data in concepts_storage.items():
-            concepts_by_freq.append({
-                'text': concept_data['text'],
-                'frequency': concept_data['frequency'],
-                'last_used': concept_data['last_used']
-            })
-        
-        concepts_by_freq.sort(key=lambda x: x['frequency'], reverse=True)
-        top_concepts = concepts_by_freq[:10]
-        
-        # Recent activity
-        recent_interactions = len([i for i in interactions_log if i.get('timestamp', '').startswith(datetime.now().strftime('%Y-%m-%d'))])
-        
-        activity_status = "active" if recent_interactions > 0 else "inactive"
-        
-        return {
-            "total_concepts": len(concepts_storage),
-            "total_interactions": len(interactions_log),
-            "recent_interactions_today": recent_interactions,
-            "top_concepts": top_concepts,
-            "recent_activity": f"Learning is {activity_status} - {recent_interactions} interactions today",
-            "status": "healthy",
-            "average_concept_frequency": sum(c['frequency'] for c in concepts_storage.values()) / len(concepts_storage) if concepts_storage else 0
-        }
-        
-    except Exception as e:
-        return {
-            "total_concepts": len(concepts_storage),
-            "total_interactions": len(interactions_log),
-            "error": str(e),
-            "status": "error"
-        }
-
-@mcp.tool
-async def reset_learning() -> Dict[str, Any]:
-    """
-    🔄 Reset all learned knowledge (use carefully!)
-    
-    WHAT IT DOES:
-    - Clears all stored concepts
-    - Resets interaction log
-    - Starts fresh learning from scratch
-    
-    WHEN TO USE:
-    - For testing/development
-    - When you want to start over
-    - To clear incorrect or unwanted learning
-    
-    OUTPUT:
-    {
-        "success": true,
-        "message": "All learning data cleared",
-        "previous_stats": {...}
-    }
-    """
-    global concepts_storage, interactions_log
-    
-    try:
-        # Save previous stats
-        previous_stats = {
-            "concepts_count": len(concepts_storage),
-            "interactions_count": len(interactions_log)
-        }
-        
-        # Clear all data
-        concepts_storage.clear()
-        interactions_log.clear()
-        
-        return {
-            "success": True,
-            "message": "All learning data has been cleared",
-            "previous_stats": previous_stats,
-            "current_stats": {
-                "concepts_count": 0,
-                "interactions_count": 0
-            }
-        }
-        
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "message": "Failed to reset learning data"
-        }
-
-# ============================================================================
-# HEALTH CHECK AND DIAGNOSTICS
-# ============================================================================
-
-@mcp.tool
-async def health_check() -> Dict[str, Any]:
-    """
-    ❤️ Check if the learning system is working properly
-    
-    WHAT IT DOES:
-    - Verifies all components are working
-    - Tests basic learning functionality
-    - Provides system status
+    Provides information about the system's health, configuration,
+    and available capabilities.
     
     OUTPUT:
     {
         "status": "healthy",
-        "learning_functional": true,
-        "retrieval_functional": true,
-        "knowledge_base_size": 10
+        "mistral_available": true,
+        "qdrant_available": true,
+        "collection": "learnd-concepts",
+        "total_interactions": 10
     }
     """
     try:
-        # Test basic functionality
-        test_concepts = extract_concepts_simple("test machine learning")
-        test_embedding = simple_embedding("test")
+        # Test Qdrant connection
+        qdrant_status = "not_configured"
+        collection_info = None
         
-        # Test storage (without permanent side effects)
-        test_similarity = calculate_similarity([1, 0, 0], [1, 0, 0])
+        if qdrant_client:
+            try:
+                collections = qdrant_client.get_collections()
+                qdrant_status = "connected"
+                
+                # Try to get collection info
+                if COLLECTION_NAME in [col.name for col in collections.collections]:
+                    collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+            except Exception as e:
+                qdrant_status = f"error: {str(e)}"
         
         return {
             "status": "healthy",
             "service": "learnd-mcp",
-            "version": "2.0-simplified",
-            "learning_functional": len(test_concepts) > 0,
-            "embedding_functional": len(test_embedding) == 100,
-            "similarity_functional": test_similarity == 1.0,
-            "knowledge_base_size": len(concepts_storage),
-            "total_interactions": len(interactions_log),
+            "version": "1.0-simplified",
+            "mistral": {
+                "available": mistral_client is not None,
+                "model": MISTRAL_MODEL if mistral_client else None
+            },
+            "qdrant": {
+                "available": qdrant_client is not None,
+                "status": qdrant_status,
+                "collection": COLLECTION_NAME,
+                "points_count": collection_info.points_count if collection_info else 0
+            },
+            "interactions": {
+                "total_logged": len(interactions_log),
+                "recent_today": len([i for i in interactions_log 
+                                   if i.get('timestamp', '').startswith(datetime.now().strftime('%Y-%m-%d'))])
+            },
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
@@ -628,18 +555,70 @@ async def health_check() -> Dict[str, Any]:
             "service": "learnd-mcp"
         }
 
+@mcp.tool
+async def clear_memory() -> Dict[str, Any]:
+    """
+    🗑️ Clear all stored memories (use carefully!)
+    
+    WHAT IT DOES:
+    Deletes all data from the Qdrant collection and clears interaction logs.
+    This is a destructive operation that cannot be undone.
+    
+    OUTPUT:
+    {
+        "success": true,
+        "message": "All memories cleared",
+        "previous_count": 150
+    }
+    """
+    try:
+        previous_count = 0
+        
+        # Get current count if possible
+        if qdrant_client:
+            try:
+                collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+                previous_count = collection_info.points_count
+                
+                # Delete and recreate collection
+                qdrant_client.delete_collection(COLLECTION_NAME)
+                await ensure_collection_exists()
+                
+            except Exception as e:
+                print(f"Warning: Could not clear Qdrant collection: {e}")
+        
+        # Clear interaction log
+        interactions_log.clear()
+        
+        return {
+            "success": True,
+            "message": "All memories and interaction logs cleared",
+            "previous_count": previous_count,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to clear memories"
+        }
+
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
 
 if __name__ == "__main__":
-    print("🧠 Learnd MCP Server - Simplified Version")
-    print("✅ Single-file implementation loaded")
-    print("📊 Available tools:")
-    print("  - learn_from_text: Learn concepts from any text")
-    print("  - get_relevant_context: Find relevant learned knowledge")
-    print("  - smart_response_with_learning: Complete learning + context pipeline")
-    print("  - get_learning_stats: View learning statistics")
-    print("  - reset_learning: Clear all learned data")
-    print("  - health_check: Verify system health")
+    print("🧠 Learnd MCP Server - Simplified AI Learning")
+    print("✅ Following Mistral + Qdrant tutorial architecture")
+    print("🤖 Components:")
+    print(f"  - Mistral AI: {'✅ Ready' if mistral_client else '⚠️ Not configured'}")
+    print(f"  - Qdrant Cloud: {'✅ Ready' if qdrant_client else '⚠️ Not configured'}")
+    print("📊 Available MCP tools:")
+    print("  - qdrant_store: Store information in vector memory")
+    print("  - qdrant_find: Find similar information from memory")
+    print("  - learn_from_interaction: Extract and store concepts from interactions")
+    print("  - get_relevant_context: Get learned context for queries")
+    print("  - get_system_status: Check system health")
+    print("  - clear_memory: Clear all stored memories")
     print("🚀 Ready for deployment!")
