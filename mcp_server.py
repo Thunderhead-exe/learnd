@@ -38,6 +38,16 @@ except ImportError:
     QDRANT_AVAILABLE = False
     print("⚠️ Qdrant client not available. Install with: uv add qdrant-client")
 
+# Clustering Libraries
+try:
+    from sklearn.cluster import KMeans
+    from sklearn.metrics.pairwise import cosine_similarity
+    import numpy as np
+    CLUSTERING_AVAILABLE = True
+except ImportError:
+    CLUSTERING_AVAILABLE = False
+    print("⚠️ Scikit-learn not available. Install with: uv add scikit-learn")
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -67,9 +77,16 @@ if QDRANT_AVAILABLE:
         print("⚠️ QDRANT_URL or QDRANT_API_KEY not found")
 
 # Configuration
-COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'learnd-concepts')
+PRIMARY_COLLECTION = os.getenv('PRIMARY_COLLECTION', 'learnd-concepts-primary')
+SECONDARY_COLLECTION = os.getenv('SECONDARY_COLLECTION', 'learnd-concepts-secondary')
+REPRESENTATIVES_COLLECTION = os.getenv('REPRESENTATIVES_COLLECTION', 'learnd-representatives')
 MISTRAL_MODEL = os.getenv('MISTRAL_MODEL', 'mistral-large-latest')
 EMBEDDING_DIMENSION = 1024  # Mistral embed model uses 1024 dimensions
+
+# Hierarchical store parameters
+FREQUENCY_THRESHOLD = 3  # Concepts with frequency >= this stay in primary
+CLUSTER_SIZE_THRESHOLD = 5  # Minimum concepts needed to form a cluster
+MAX_CLUSTERS = 10  # Maximum number of clusters in secondary layer
 
 # Simple in-memory interaction log
 interactions_log = []
@@ -78,63 +95,67 @@ interactions_log = []
 # QDRANT OPERATIONS (Following tutorial pattern)
 # ============================================================================
 
-async def ensure_collection_exists():
-    """Ensure the Qdrant collection exists with correct dimensions."""
+async def ensure_collections_exist():
+    """Ensure all Qdrant collections exist with correct dimensions."""
     if not qdrant_client:
         return False
     
+    collections_to_create = [
+        PRIMARY_COLLECTION,
+        SECONDARY_COLLECTION, 
+        REPRESENTATIVES_COLLECTION
+    ]
+    
     try:
-        collections = qdrant_client.get_collections()
-        collection_names = [col.name for col in collections.collections]
+        existing_collections = qdrant_client.get_collections()
+        existing_names = [col.name for col in existing_collections.collections]
         
-        if COLLECTION_NAME not in collection_names:
-            # Create new collection
-            qdrant_client.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=models.VectorParams(
-                    size=EMBEDDING_DIMENSION,
-                    distance=models.Distance.COSINE
-                )
-            )
-            print(f"✅ Created Qdrant collection: {COLLECTION_NAME} with {EMBEDDING_DIMENSION} dimensions")
-        else:
-            # Check if existing collection has correct dimensions
-            try:
-                collection_info = qdrant_client.get_collection(COLLECTION_NAME)
-                existing_dim = collection_info.config.params.vectors.size
-                
-                if existing_dim != EMBEDDING_DIMENSION:
-                    print(f"⚠️ Collection dimension mismatch: expected {EMBEDDING_DIMENSION}, got {existing_dim}")
-                    print(f"🔄 Recreating collection with correct dimensions...")
-                    
-                    # Delete and recreate collection
-                    qdrant_client.delete_collection(COLLECTION_NAME)
-                    qdrant_client.create_collection(
-                        collection_name=COLLECTION_NAME,
-                        vectors_config=models.VectorParams(
-                            size=EMBEDDING_DIMENSION,
-                            distance=models.Distance.COSINE
-                        )
+        for collection_name in collections_to_create:
+            if collection_name not in existing_names:
+                # Create new collection
+                qdrant_client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=models.VectorParams(
+                        size=EMBEDDING_DIMENSION,
+                        distance=models.Distance.COSINE
                     )
-                    print(f"✅ Recreated collection with {EMBEDDING_DIMENSION} dimensions")
-                else:
-                    print(f"✅ Collection exists with correct dimensions: {EMBEDDING_DIMENSION}")
+                )
+                print(f"✅ Created collection: {collection_name}")
+            else:
+                # Check dimensions
+                try:
+                    collection_info = qdrant_client.get_collection(collection_name)
+                    existing_dim = collection_info.config.params.vectors.size
                     
-            except Exception as e:
-                print(f"⚠️ Could not check collection dimensions: {e}")
+                    if existing_dim != EMBEDDING_DIMENSION:
+                        print(f"⚠️ {collection_name} dimension mismatch: {existing_dim} → {EMBEDDING_DIMENSION}")
+                        qdrant_client.delete_collection(collection_name)
+                        qdrant_client.create_collection(
+                            collection_name=collection_name,
+                            vectors_config=models.VectorParams(
+                                size=EMBEDDING_DIMENSION,
+                                distance=models.Distance.COSINE
+                            )
+                        )
+                        print(f"✅ Recreated {collection_name} with {EMBEDDING_DIMENSION} dimensions")
+                    else:
+                        print(f"✅ {collection_name} ready")
+                        
+                except Exception as e:
+                    print(f"⚠️ Could not check {collection_name}: {e}")
         
         return True
     except Exception as e:
-        print(f"⚠️ Failed to ensure collection exists: {e}")
+        print(f"⚠️ Failed to ensure collections exist: {e}")
         return False
 
 async def store_in_qdrant(text: str, metadata: Dict[str, Any] = None) -> str:
-    """Store text in Qdrant using Mistral for embedding generation."""
+    """Store text in hierarchical Qdrant using frequency-based placement."""
     if not qdrant_client or not mistral_client:
         return "error: Missing Qdrant or Mistral client"
     
     try:
-        await ensure_collection_exists()
+        await ensure_collections_exist()
         
         # Generate embedding using Mistral
         embeddings_response = mistral_client.embeddings.create(
@@ -143,39 +164,122 @@ async def store_in_qdrant(text: str, metadata: Dict[str, Any] = None) -> str:
         )
         embedding = embeddings_response.data[0].embedding
         
-        # Create point with metadata
-        point_id = str(uuid.uuid4())
-        payload = {
-            "text": text,
-            "stored_at": datetime.now(timezone.utc).isoformat(),
-            **(metadata or {})
-        }
+        # Check if concept already exists
+        existing_concept = await find_existing_concept(text)
         
-        # Store in Qdrant
-        qdrant_client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=[
-                models.PointStruct(
-                    id=point_id,
-                    vector=embedding,
-                    payload=payload
-                )
-            ]
-        )
-        
-        return f"Stored successfully with ID: {point_id}"
+        if existing_concept:
+            # Update frequency and potentially move between layers
+            return await update_concept_frequency(existing_concept, text, embedding, metadata)
+        else:
+            # New concept - store in primary layer initially
+            return await store_new_concept(text, embedding, metadata)
         
     except Exception as e:
         return f"Error storing in Qdrant: {str(e)}"
 
-async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
-    """Find similar content in Qdrant."""
+async def find_existing_concept(text: str) -> Optional[Dict[str, Any]]:
+    """Find if a concept already exists in any collection."""
+    try:
+        # Search in primary collection
+        results = await find_in_collection(PRIMARY_COLLECTION, text, limit=1)
+        if results and len(results) > 0:
+            return {"collection": PRIMARY_COLLECTION, "concept": results[0]}
+        
+        # Search in secondary collection
+        results = await find_in_collection(SECONDARY_COLLECTION, text, limit=1)
+        if results and len(results) > 0:
+            return {"collection": SECONDARY_COLLECTION, "concept": results[0]}
+            
+        return None
+    except Exception as e:
+        print(f"Error finding existing concept: {e}")
+        return None
+
+async def store_new_concept(text: str, embedding: List[float], metadata: Dict[str, Any] = None) -> str:
+    """Store a new concept in the primary collection."""
+    payload = {
+        "text": text,
+        "stored_at": datetime.now(timezone.utc).isoformat(),
+        "frequency": 1,
+        "last_accessed": datetime.now(timezone.utc).isoformat(),
+        **(metadata or {})
+    }
+    
+    point_id = str(uuid.uuid4())
+    qdrant_client.upsert(
+        collection_name=PRIMARY_COLLECTION,
+        points=[
+            models.PointStruct(
+                id=point_id,
+                vector=embedding,
+                payload=payload
+            )
+        ]
+    )
+    
+    return f"Stored new concept in primary layer with ID: {point_id}"
+
+async def update_concept_frequency(existing: Dict[str, Any], text: str, embedding: List[float], metadata: Dict[str, Any] = None) -> str:
+    """Update frequency of existing concept and potentially move between layers."""
+    collection = existing["collection"]
+    concept = existing["concept"]
+    current_frequency = concept.get("metadata", {}).get("frequency", 1)
+    new_frequency = current_frequency + 1
+    
+    # Update payload
+    updated_payload = concept.get("metadata", {})
+    updated_payload.update({
+        "frequency": new_frequency,
+        "last_accessed": datetime.now(timezone.utc).isoformat(),
+        **(metadata or {})
+    })
+    
+    # Determine target collection based on frequency
+    target_collection = PRIMARY_COLLECTION if new_frequency >= FREQUENCY_THRESHOLD else SECONDARY_COLLECTION
+    
+    # If moving between collections, delete from old and add to new
+    if collection != target_collection:
+        # Delete from current collection
+        qdrant_client.delete(
+            collection_name=collection,
+            points_selector=models.PointIdsList(points=[concept["id"]])
+        )
+        
+        # Add to target collection
+        point_id = str(uuid.uuid4())
+        qdrant_client.upsert(
+            collection_name=target_collection,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector=embedding,
+                    payload=updated_payload
+                )
+            ]
+        )
+        
+        return f"Updated concept frequency to {new_frequency} and moved to {target_collection} layer"
+    else:
+        # Update in same collection
+        qdrant_client.upsert(
+            collection_name=collection,
+            points=[
+                models.PointStruct(
+                    id=concept["id"],
+                    vector=embedding,
+                    payload=updated_payload
+                )
+            ]
+        )
+        
+        return f"Updated concept frequency to {new_frequency} in {collection} layer"
+
+async def find_in_collection(collection_name: str, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Search for similar content in a specific collection."""
     if not qdrant_client or not mistral_client:
         return [{"error": "Missing Qdrant or Mistral client"}]
     
     try:
-        await ensure_collection_exists()
-        
         # Generate embedding for query
         embeddings_response = mistral_client.embeddings.create(
             model="mistral-embed",
@@ -183,9 +287,9 @@ async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         )
         query_embedding = embeddings_response.data[0].embedding
         
-        # Search in Qdrant using the new query_points method
+        # Search in specified collection
         search_results = qdrant_client.query_points(
-            collection_name=COLLECTION_NAME,
+            collection_name=collection_name,
             query=query_embedding,
             limit=limit,
             with_payload=True,
@@ -196,6 +300,7 @@ async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         results = []
         for result in search_results.points:
             results.append({
+                "id": result.id,
                 "text": result.payload.get("text", ""),
                 "score": round(result.score, 3),
                 "stored_at": result.payload.get("stored_at", ""),
@@ -206,7 +311,251 @@ async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         return results
         
     except Exception as e:
-        return [{"error": f"Error searching Qdrant: {str(e)}"}]
+        return [{"error": f"Error searching {collection_name}: {str(e)}"}]
+
+async def find_in_qdrant(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Find similar content using hierarchical search (primary + secondary with clustering)."""
+    if not qdrant_client or not mistral_client:
+        return [{"error": "Missing Qdrant or Mistral client"}]
+    
+    try:
+        await ensure_collections_exist()
+        
+        all_results = []
+        
+        # 1. Search in primary collection (frequent concepts)
+        primary_results = await find_in_collection(PRIMARY_COLLECTION, query, limit)
+        if primary_results and not any("error" in r for r in primary_results):
+            for result in primary_results:
+                result["layer"] = "primary"
+                all_results.append(result)
+        
+        # 2. Search in representatives collection (cluster representatives)
+        representative_results = await find_in_collection(REPRESENTATIVES_COLLECTION, query, limit)
+        if representative_results and not any("error" in r for r in representative_results):
+            # For each representative that matches, load its cluster from secondary
+            for rep_result in representative_results:
+                rep_result["layer"] = "representative"
+                all_results.append(rep_result)
+                
+                # Load the cluster from secondary collection
+                cluster_id = rep_result.get("metadata", {}).get("cluster_id")
+                if cluster_id:
+                    cluster_results = await load_cluster_from_secondary(cluster_id, query)
+                    all_results.extend(cluster_results)
+        
+        # 3. If no representatives found, search secondary collection directly
+        if not representative_results or all("error" in r for r in representative_results):
+            secondary_results = await find_in_collection(SECONDARY_COLLECTION, query, limit)
+            if secondary_results and not any("error" in r for r in secondary_results):
+                for result in secondary_results:
+                    result["layer"] = "secondary"
+                    all_results.append(result)
+        
+        # Sort by score and limit results
+        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return all_results[:limit]
+        
+    except Exception as e:
+        return [{"error": f"Error in hierarchical search: {str(e)}"}]
+
+async def load_cluster_from_secondary(cluster_id: str, query: str) -> List[Dict[str, Any]]:
+    """Load all concepts from a specific cluster in the secondary collection."""
+    try:
+        # Get all points from secondary collection with the cluster_id
+        scroll_results = qdrant_client.scroll(
+            collection_name=SECONDARY_COLLECTION,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="cluster_id",
+                        match=models.MatchValue(value=cluster_id)
+                    )
+                ]
+            ),
+            limit=100,  # Reasonable limit for cluster size
+            with_payload=True
+        )
+        
+        cluster_results = []
+        for point in scroll_results[0]:  # scroll_results is (points, next_page_offset)
+            cluster_results.append({
+                "id": point.id,
+                "text": point.payload.get("text", ""),
+                "score": 0.8,  # Default score for cluster members
+                "stored_at": point.payload.get("stored_at", ""),
+                "layer": "secondary_cluster",
+                "cluster_id": cluster_id,
+                "metadata": {k: v for k, v in point.payload.items() 
+                           if k not in ["text", "stored_at"]}
+            })
+        
+        return cluster_results
+        
+    except Exception as e:
+        print(f"Error loading cluster {cluster_id}: {e}")
+        return []
+
+# ============================================================================
+# CLUSTERING OPERATIONS
+# ============================================================================
+
+async def cluster_secondary_concepts():
+    """Cluster concepts in secondary collection and create representative vectors."""
+    if not CLUSTERING_AVAILABLE or not qdrant_client:
+        return {"success": False, "error": "Clustering not available"}
+    
+    try:
+        # Get all concepts from secondary collection
+        scroll_results = qdrant_client.scroll(
+            collection_name=SECONDARY_COLLECTION,
+            limit=1000,  # Reasonable limit
+            with_payload=True,
+            with_vectors=True
+        )
+        
+        concepts = scroll_results[0]  # (points, next_page_offset)
+        
+        if len(concepts) < CLUSTER_SIZE_THRESHOLD:
+            return {"success": True, "message": f"Not enough concepts to cluster ({len(concepts)} < {CLUSTER_SIZE_THRESHOLD})"}
+        
+        # Prepare data for clustering
+        embeddings = []
+        concept_data = []
+        
+        for point in concepts:
+            embeddings.append(point.vector)
+            concept_data.append({
+                "id": point.id,
+                "text": point.payload.get("text", ""),
+                "metadata": point.payload
+            })
+        
+        # Determine optimal number of clusters
+        n_clusters = min(MAX_CLUSTERS, max(2, len(concepts) // CLUSTER_SIZE_THRESHOLD))
+        
+        # Perform K-means clustering
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        cluster_labels = kmeans.fit_predict(embeddings)
+        
+        # Create representative vectors and store clusters
+        cluster_representatives = []
+        
+        for cluster_id in range(n_clusters):
+            cluster_indices = [i for i, label in enumerate(cluster_labels) if label == cluster_id]
+            
+            if len(cluster_indices) == 0:
+                continue
+            
+            # Calculate mean vector for cluster
+            cluster_embeddings = [embeddings[i] for i in cluster_indices]
+            mean_vector = np.mean(cluster_embeddings, axis=0).tolist()
+            
+            # Get cluster concepts
+            cluster_concepts = [concept_data[i] for i in cluster_indices]
+            cluster_texts = [concept["text"] for concept in cluster_concepts]
+            
+            # Create representative concept
+            representative_text = f"Cluster {cluster_id}: {', '.join(cluster_texts[:3])}{'...' if len(cluster_texts) > 3 else ''}"
+            
+            # Store representative in representatives collection
+            rep_id = str(uuid.uuid4())
+            qdrant_client.upsert(
+                collection_name=REPRESENTATIVES_COLLECTION,
+                points=[
+                    models.PointStruct(
+                        id=rep_id,
+                        vector=mean_vector,
+                        payload={
+                            "text": representative_text,
+                            "cluster_id": str(cluster_id),
+                            "cluster_size": len(cluster_concepts),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "concept_texts": cluster_texts
+                        }
+                    )
+                ]
+            )
+            
+            # Update secondary collection concepts with cluster_id
+            for concept in cluster_concepts:
+                updated_payload = concept["metadata"].copy()
+                updated_payload["cluster_id"] = str(cluster_id)
+                
+                qdrant_client.upsert(
+                    collection_name=SECONDARY_COLLECTION,
+                    points=[
+                        models.PointStruct(
+                            id=concept["id"],
+                            vector=embeddings[concept_data.index(concept)],
+                            payload=updated_payload
+                        )
+                    ]
+                )
+            
+            cluster_representatives.append({
+                "cluster_id": cluster_id,
+                "size": len(cluster_concepts),
+                "representative_text": representative_text
+            })
+        
+        return {
+            "success": True,
+            "clusters_created": len(cluster_representatives),
+            "total_concepts_clustered": len(concepts),
+            "representatives": cluster_representatives
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": f"Clustering failed: {str(e)}"}
+
+async def promote_concepts_to_primary():
+    """Move high-frequency concepts from secondary to primary collection."""
+    try:
+        # Get all concepts from secondary collection
+        scroll_results = qdrant_client.scroll(
+            collection_name=SECONDARY_COLLECTION,
+            limit=1000,
+            with_payload=True,
+            with_vectors=True
+        )
+        
+        concepts = scroll_results[0]
+        promoted_count = 0
+        
+        for point in concepts:
+            frequency = point.payload.get("frequency", 0)
+            
+            if frequency >= FREQUENCY_THRESHOLD:
+                # Move to primary collection
+                point_id = str(uuid.uuid4())
+                qdrant_client.upsert(
+                    collection_name=PRIMARY_COLLECTION,
+                    points=[
+                        models.PointStruct(
+                            id=point_id,
+                            vector=point.vector,
+                            payload=point.payload
+                        )
+                    ]
+                )
+                
+                # Remove from secondary
+                qdrant_client.delete(
+                    collection_name=SECONDARY_COLLECTION,
+                    points_selector=models.PointIdsList(points=[point.id])
+                )
+                
+                promoted_count += 1
+        
+        return {
+            "success": True,
+            "promoted_count": promoted_count,
+            "message": f"Promoted {promoted_count} concepts to primary layer"
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": f"Promotion failed: {str(e)}"}
 
 # ============================================================================
 # MCP TOOLS (Simplified, following tutorial pattern)
@@ -685,6 +1034,118 @@ async def fix_collection_dimensions() -> Dict[str, Any]:
         }
 
 @mcp.tool
+async def cluster_secondary_layer() -> Dict[str, Any]:
+    """
+    🔄 Cluster concepts in secondary layer and create representative vectors
+    
+    WHAT IT DOES:
+    Groups less frequent concepts in the secondary collection into clusters
+    and creates representative vectors for efficient retrieval.
+    
+    WHEN TO USE:
+    - When secondary layer has accumulated enough concepts
+    - To optimize search performance for less frequent concepts
+    - As part of maintenance routine
+    
+    OUTPUT:
+    {
+        "success": true,
+        "clusters_created": 3,
+        "total_concepts_clustered": 15,
+        "representatives": [...]
+    }
+    """
+    return await cluster_secondary_concepts()
+
+@mcp.tool
+async def promote_frequent_concepts() -> Dict[str, Any]:
+    """
+    ⬆️ Promote high-frequency concepts from secondary to primary layer
+    
+    WHAT IT DOES:
+    Moves concepts that have been accessed frequently from the secondary
+    layer to the primary layer for faster access.
+    
+    WHEN TO USE:
+    - After clustering to reorganize the hierarchy
+    - When concepts become more frequently accessed
+    - As part of maintenance routine
+    
+    OUTPUT:
+    {
+        "success": true,
+        "promoted_count": 5,
+        "message": "Promoted 5 concepts to primary layer"
+    }
+    """
+    return await promote_concepts_to_primary()
+
+@mcp.tool
+async def get_hierarchy_stats() -> Dict[str, Any]:
+    """
+    📊 Get statistics about the hierarchical vector store
+    
+    WHAT IT DOES:
+    Provides detailed statistics about the three-layer hierarchy:
+    primary concepts, secondary concepts, and cluster representatives.
+    
+    WHEN TO USE:
+    - To monitor the health of the hierarchical system
+    - To understand concept distribution across layers
+    - For debugging and optimization
+    
+    OUTPUT:
+    {
+        "primary_count": 25,
+        "secondary_count": 45,
+        "representatives_count": 8,
+        "clusters": [...],
+        "total_concepts": 70
+    }
+    """
+    try:
+        if not qdrant_client:
+            return {"success": False, "error": "Qdrant client not available"}
+        
+        # Get counts for each collection
+        primary_info = qdrant_client.get_collection(PRIMARY_COLLECTION)
+        secondary_info = qdrant_client.get_collection(SECONDARY_COLLECTION)
+        representatives_info = qdrant_client.get_collection(REPRESENTATIVES_COLLECTION)
+        
+        primary_count = primary_info.points_count or 0
+        secondary_count = secondary_info.points_count or 0
+        representatives_count = representatives_info.points_count or 0
+        
+        # Get cluster information
+        clusters = []
+        if representatives_count > 0:
+            scroll_results = qdrant_client.scroll(
+                collection_name=REPRESENTATIVES_COLLECTION,
+                limit=100,
+                with_payload=True
+            )
+            
+            for point in scroll_results[0]:
+                clusters.append({
+                    "cluster_id": point.payload.get("cluster_id"),
+                    "size": point.payload.get("cluster_size", 0),
+                    "representative_text": point.payload.get("text", "")[:100] + "..."
+                })
+        
+        return {
+            "success": True,
+            "primary_count": primary_count,
+            "secondary_count": secondary_count,
+            "representatives_count": representatives_count,
+            "clusters": clusters,
+            "total_concepts": primary_count + secondary_count,
+            "hierarchy_health": "healthy" if representatives_count > 0 else "needs_clustering"
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": f"Failed to get hierarchy stats: {str(e)}"}
+
+@mcp.tool
 async def clear_memory() -> Dict[str, Any]:
     """
     🗑️ Clear all stored memories (use carefully!)
@@ -706,15 +1167,25 @@ async def clear_memory() -> Dict[str, Any]:
         # Get current count if possible
         if qdrant_client:
             try:
-                collection_info = qdrant_client.get_collection(COLLECTION_NAME)
-                previous_count = collection_info.points_count
+                # Get total count from all collections
+                primary_info = qdrant_client.get_collection(PRIMARY_COLLECTION)
+                secondary_info = qdrant_client.get_collection(SECONDARY_COLLECTION)
+                representatives_info = qdrant_client.get_collection(REPRESENTATIVES_COLLECTION)
                 
-                # Delete and recreate collection
-                qdrant_client.delete_collection(COLLECTION_NAME)
-                await ensure_collection_exists()
+                previous_count = (primary_info.points_count or 0) + (secondary_info.points_count or 0) + (representatives_info.points_count or 0)
+                
+                # Delete and recreate all collections
+                collections_to_clear = [PRIMARY_COLLECTION, SECONDARY_COLLECTION, REPRESENTATIVES_COLLECTION]
+                for collection_name in collections_to_clear:
+                    try:
+                        qdrant_client.delete_collection(collection_name)
+                    except Exception as e:
+                        print(f"Warning: Could not clear {collection_name}: {e}")
+                
+                await ensure_collections_exist()
                 
             except Exception as e:
-                print(f"Warning: Could not clear Qdrant collection: {e}")
+                print(f"Warning: Could not clear Qdrant collections: {e}")
         
         # Clear interaction log
         interactions_log.clear()
@@ -744,11 +1215,14 @@ if __name__ == "__main__":
     print(f"  - Mistral AI: {'✅ Ready' if mistral_client else '⚠️ Not configured'}")
     print(f"  - Qdrant Cloud: {'✅ Ready' if qdrant_client else '⚠️ Not configured'}")
     print("📊 Available MCP tools:")
-    print("  - qdrant_store: Store information in vector memory")
-    print("  - qdrant_find: Find similar information from memory")
+    print("  - qdrant_store: Store information in hierarchical vector memory")
+    print("  - qdrant_find: Find similar information using hierarchical search")
     print("  - learn_from_interaction: Extract and store concepts from interactions")
     print("  - get_relevant_context: Get learned context for queries")
     print("  - get_system_status: Check system health")
     print("  - fix_collection_dimensions: Fix dimension mismatch issues")
+    print("  - cluster_secondary_layer: Cluster less frequent concepts")
+    print("  - promote_frequent_concepts: Move frequent concepts to primary layer")
+    print("  - get_hierarchy_stats: Get hierarchical store statistics")
     print("  - clear_memory: Clear all stored memories")
     print("🚀 Ready for deployment!")
